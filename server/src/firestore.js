@@ -22,14 +22,35 @@ export function isAvailable() {
   return available;
 }
 
+/**
+ * Resolve a credencial da service account a partir de (nesta ordem):
+ *   1. variável de ambiente FIREBASE_SERVICE_ACCOUNT (JSON em texto) — usada na nuvem (Render);
+ *   2. arquivo local server/serviceAccountKey.json — usado em desenvolvimento.
+ * Retorna o objeto da credencial ou null se nenhuma fonte estiver disponível.
+ */
+function resolveCredential() {
+  const raw = process.env.FIREBASE_SERVICE_ACCOUNT;
+  if (raw && raw.trim()) {
+    try {
+      return JSON.parse(raw);
+    } catch (e) {
+      console.error('  ⚠️  FIREBASE_SERVICE_ACCOUNT inválido (não é um JSON válido):', e.message);
+    }
+  }
+  if (fs.existsSync(KEY_FILE)) {
+    return JSON.parse(fs.readFileSync(KEY_FILE, 'utf-8'));
+  }
+  return null;
+}
+
 export function initFirestore() {
   if (fsdb) return true;
-  if (!fs.existsSync(KEY_FILE)) {
-    console.warn('  ⚠️  serviceAccountKey.json não encontrado — Firestore desativado (usando JSON local).');
+  const cred = resolveCredential();
+  if (!cred) {
+    console.warn('  ⚠️  Credencial do Firebase não encontrada (nem FIREBASE_SERVICE_ACCOUNT nem serviceAccountKey.json) — Firestore desativado (usando JSON local).');
     return false;
   }
   try {
-    const cred = JSON.parse(fs.readFileSync(KEY_FILE, 'utf-8'));
     admin.initializeApp({ credential: admin.credential.cert(cred), projectId: cred.project_id });
     fsdb = admin.firestore();
     fsdb.settings({ ignoreUndefinedProperties: true });

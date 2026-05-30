@@ -50,6 +50,9 @@ export function initWhatsApp() {
     authStrategy: new LocalAuth({ dataPath: AUTH_DIR }),
     puppeteer: {
       headless: true,
+      // Em produção (Docker/Render) usamos o Chromium do sistema via
+      // PUPPETEER_EXECUTABLE_PATH; em dev, fica undefined e usa o do Puppeteer.
+      executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
       args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
     },
   });
