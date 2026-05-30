@@ -73,7 +73,23 @@ salva em `server/data/.wwebjs_auth`, então não é preciso parear toda vez.
 - O administrador pode editar, cancelar e remarcar qualquer agendamento.
 - Funciona bem no celular e no navegador (layout responsivo, bottom-nav no mobile).
 
-## 🗂️ Estrutura de dados (`server/data/db.json`)
+## 🔥 Persistência no Firebase (Firestore)
+Os dados são persistidos no **Cloud Firestore** (projeto `barberman-qryav`). O backend
+mantém um **cache em memória** para respostas rápidas e sincroniza as alterações para o
+Firestore por *diff* (upsert/delete) a cada gravação. Um arquivo `server/data/db.json`
+é mantido apenas como **backup local** e *fallback* caso o Firestore esteja indisponível.
+
+**Para rodar com Firestore** é necessária uma chave de service account em
+`server/serviceAccountKey.json` (ignorada pelo Git):
+
+1. Firebase Console → ⚙️ *Configurações do projeto* → **Contas de serviço**
+2. **Gerar nova chave privada** → salve o arquivo como `server/serviceAccountKey.json`
+
+> Sem a chave, o app continua funcionando apenas com o `db.json` local (modo offline).
+> Coleções no Firestore: `clients`, `services`, `barbers`, `availability`, `blocks`,
+> `appointments`, `notifications` e `meta/settings`.
+
+## 🗂️ Estrutura de dados (coleções do Firestore / `server/data/db.json`)
 - **clients**: nome, telefone, e-mail, histórico
 - **services**: nome, descrição, duração, preço, categoria
 - **barbers**: nome, foto, função, especialidades, bio

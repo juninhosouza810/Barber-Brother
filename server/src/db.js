@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
+import { initFirestore, isAvailable, isInitialized, loadAll, writeAll, syncDiff } from './firestore.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DATA_DIR = path.join(__dirname, '..', 'data');
@@ -81,42 +82,116 @@ function seedData() {
   return { clients: [], services, barbers, availability, blocks: [], appointments: [], notifications: [], settings };
 }
 
-let cache = null;
+const ARRAY_KEYS = ['clients', 'services', 'barbers', 'availability', 'blocks', 'appointments', 'notifications'];
 
-function ensureLoaded() {
-  if (cache) return cache;
-  if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
-  if (fs.existsSync(DB_FILE)) {
-    try {
-      cache = JSON.parse(fs.readFileSync(DB_FILE, 'utf-8'));
-      // Migração leve: garante coleções novas em bancos antigos.
-      if (!Array.isArray(cache.blocks)) cache.blocks = [];
-    } catch {
-      cache = seedData();
-      persist();
-    }
-  } else {
-    cache = seedData();
-    persist();
-  }
-  return cache;
+let cache = null;
+let lastSnapshot = null;   // último estado já refletido no Firestore
+let syncTimer = null;
+let syncing = false;
+let pendingSync = false;
+
+const clone = (x) => JSON.parse(JSON.stringify(x));
+
+// Garante que todas as coleções/objetos esperados existam.
+function normalize(c) {
+  const out = { ...seedData(), ...(c || {}) };
+  for (const k of ARRAY_KEYS) if (!Array.isArray(out[k])) out[k] = [];
+  if (!out.settings || typeof out.settings !== 'object') out.settings = seedData().settings;
+  return out;
 }
 
-function persist() {
+function loadJSON() {
+  if (!fs.existsSync(DB_FILE)) return null;
+  try {
+    const c = JSON.parse(fs.readFileSync(DB_FILE, 'utf-8'));
+    if (!Array.isArray(c.blocks)) c.blocks = [];
+    return c;
+  } catch {
+    return null;
+  }
+}
+
+function persistJSON() {
+  if (!cache) return;
   if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
   fs.writeFileSync(DB_FILE, JSON.stringify(cache, null, 2), 'utf-8');
 }
 
+// Carrega o cache de forma síncrona (JSON local ou seed) caso ainda não tenha sido
+// carregado. Mantém a API db.get() síncrona mesmo antes do init() assíncrono.
+function ensureLoaded() {
+  if (cache) return cache;
+  cache = normalize(loadJSON() || seedData());
+  persistJSON();
+  return cache;
+}
+
+/**
+ * Inicialização assíncrona: Firestore como fonte primária.
+ * Na 1ª vez popula o Firestore a partir do JSON/seed; depois carrega de lá.
+ */
+async function init() {
+  if (initFirestore()) {
+    try {
+      if (await isInitialized()) {
+        cache = normalize(await loadAll());
+        console.log('  🔥 Dados carregados do Firestore.');
+      } else {
+        cache = normalize(loadJSON() || seedData());
+        await writeAll(cache);
+        console.log('  🔥 Firestore inicializado com os dados atuais.');
+      }
+      lastSnapshot = clone(cache);
+      persistJSON();
+      return;
+    } catch (e) {
+      console.error('  ⚠️  Erro ao acessar o Firestore, usando JSON local:', e.message);
+    }
+  }
+  // Fallback: somente JSON local.
+  cache = normalize(loadJSON() || seedData());
+  persistJSON();
+}
+
+function scheduleSync() {
+  if (!isAvailable()) return;
+  if (syncTimer) clearTimeout(syncTimer);
+  syncTimer = setTimeout(runSync, 400); // coalesce gravações em rajada
+}
+
+async function runSync() {
+  if (!isAvailable() || !cache) return;
+  if (syncing) { pendingSync = true; return; }
+  syncing = true;
+  const target = clone(cache);
+  try {
+    const n = await syncDiff(target, lastSnapshot);
+    lastSnapshot = target;
+    if (n) console.log(`  🔥 Firestore: ${n} alteração(ões) sincronizada(s).`);
+  } catch (e) {
+    console.error('  ⚠️  Falha ao sincronizar com o Firestore:', e.message);
+  } finally {
+    syncing = false;
+    if (pendingSync) { pendingSync = false; scheduleSync(); }
+  }
+}
+
 export const db = {
+  init,
   get() {
     return ensureLoaded();
   },
   save() {
-    persist();
+    ensureLoaded();
+    persistJSON();     // backup local imediato
+    scheduleSync();    // sincroniza com o Firestore (debounce)
   },
   reset() {
-    cache = seedData();
-    persist();
+    cache = normalize(seedData());
+    persistJSON();
+    scheduleSync();    // o diff remove no Firestore o que saiu do seed
     return cache;
   },
+  // Força a sincronização pendente (ex.: testes / shutdown).
+  async flush() { if (syncTimer) clearTimeout(syncTimer); await runSync(); },
 };

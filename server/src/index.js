@@ -383,6 +383,9 @@ app.get('/api/whatsapp/status', (req, res) => ok(res, waStatus()));
 app.post('/api/whatsapp/connect', (req, res) => ok(res, initWhatsApp()));
 app.post('/api/whatsapp/logout', async (req, res) => ok(res, await logoutWhatsApp()));
 
+// Carrega os dados (Firestore como fonte primária) antes de aceitar requisições.
+await db.init();
+
 app.listen(PORT, () => {
   console.log(`\n  🪒 BarberMan API rodando em http://localhost:${PORT}\n`);
   startReminderLoop();
