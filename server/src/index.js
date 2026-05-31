@@ -15,6 +15,9 @@ const PORT = process.env.PORT || 4000;
 const ok = (res, data) => res.json(data);
 const bad = (res, msg, code = 400) => res.status(code).json({ error: msg });
 
+// Health check público (usado pelo Render para verificar se o serviço subiu).
+app.get('/api/health', (req, res) => res.json({ ok: true }));
+
 // Helpers de escopo por barbearia (multi-tenant).
 const ofShop = (req) => (x) => x.shopId === req.shopId;
 const shopSettings = (req) => db.getShop(req.shopId) || {};

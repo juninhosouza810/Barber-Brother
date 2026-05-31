@@ -13,7 +13,7 @@ services:
     dockerContext: ./server
     plan: free           # troque para "starter" para ficar sempre ligado (24/7)
     branch: main
-    healthCheckPath: /api/services
+    healthCheckPath: /api/health
     envVars:
       - key: NODE_ENV
         value: production
