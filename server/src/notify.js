@@ -1,5 +1,4 @@
 import { db, uid } from './db.js';
-import { sendWhatsApp } from './whatsapp.js';
 
 const fmtDate = (d) => {
   const [y, m, day] = d.split('-');
@@ -56,9 +55,9 @@ export function buildMessage(appointment, kind = 'novo') {
 }
 
 /**
- * Gera e registra uma notificação de WhatsApp e dispara o envio real
- * (quando há sessão conectada). O envio é assíncrono: o registro é
- * retornado na hora e o status de entrega é atualizado em seguida.
+ * Gera e registra um aviso na central de notificações. O envio automático por
+ * WhatsApp foi removido; aqui montamos a mensagem e um link wa.me pronto para
+ * que o atendente, se quiser, envie manualmente com um clique pelo painel.
  */
 export function pushNotification(appointment, kind = 'novo') {
   const data = db.get();
@@ -70,14 +69,14 @@ export function pushNotification(appointment, kind = 'novo') {
   const record = {
     id: uid(),
     appointmentId: appointment.id,
-    channel: 'whatsapp',
+    channel: 'manual',
     kind,
     to: appointment.clientPhone,
     clientName: appointment.clientName,
     message,
     waLink,
     delivered: false,
-    deliveryInfo: 'Enviando...',
+    deliveryInfo: 'Envie pelo link, se desejar',
     createdAt: new Date().toISOString(),
     read: false,
   };
@@ -85,18 +84,6 @@ export function pushNotification(appointment, kind = 'novo') {
   data.notifications.unshift(record);
   if (data.notifications.length > 200) data.notifications.length = 200;
   db.save();
-
-  // Envio real (best-effort, sem travar a resposta HTTP).
-  sendWhatsApp(appointment.clientPhone, message)
-    .then((r) => {
-      record.delivered = r.sent;
-      record.deliveryInfo = r.sent ? 'Enviado automaticamente' : (r.reason || 'Falha no envio');
-      db.save();
-    })
-    .catch((e) => {
-      record.deliveryInfo = e.message || 'Falha no envio';
-      db.save();
-    });
 
   return record;
 }

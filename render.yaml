@@ -15,17 +15,8 @@ services:
     branch: main
     healthCheckPath: /api/services
     envVars:
-      - key: PUPPETEER_EXECUTABLE_PATH
-        value: /usr/bin/chromium
       - key: NODE_ENV
         value: production
       # Cole o conteúdo do serviceAccountKey.json aqui pelo painel (Secret).
       - key: FIREBASE_SERVICE_ACCOUNT
         sync: false
-
-    # --- Para produção (plano pago), descomente para manter a sessão do
-    #     WhatsApp pareada entre reinícios: ---
-    # disk:
-    #   name: barberman-data
-    #   mountPath: /app/data
-    #   sizeGB: 1

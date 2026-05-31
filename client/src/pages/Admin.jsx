@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import {
   Shield, LayoutDashboard, CalendarRange, Scissors, Users, Bell, Settings as Cog,
   Plus, Trash2, Pencil, Check, X, MessageCircle, RotateCcw, LogOut, ArrowLeft, Clock, CalendarPlus,
-  Smartphone, QrCode, Power, RefreshCw, CheckCircle2, CalendarOff, Ban, Sun,
+  CheckCircle2, CalendarOff, Ban, Sun,
 } from 'lucide-react';
 import { api } from '../api.js';
 import { BRL, fmtDuration, fmtDateShort, fmtDateLong, WEEKDAYS, nextDays, toISODate, parseISO, buildTimes } from '../lib.js';
@@ -23,7 +23,6 @@ export default function Admin() {
     { id: 'servicos', label: 'Serviços', icon: Scissors },
     { id: 'barbeiros', label: 'Barbeiros', icon: Users },
     { id: 'clientes', label: 'Clientes', icon: LayoutDashboard },
-    { id: 'whatsapp', label: 'WhatsApp', icon: Smartphone },
     { id: 'notificacoes', label: 'Notificações', icon: Bell },
     { id: 'config', label: 'Config', icon: Cog },
   ];
@@ -56,7 +55,6 @@ export default function Admin() {
       {tab === 'servicos' && <ServicesTab toast={toast} />}
       {tab === 'barbeiros' && <BarbersTab toast={toast} />}
       {tab === 'clientes' && <ClientsTab toast={toast} />}
-      {tab === 'whatsapp' && <WhatsAppTab toast={toast} />}
       {tab === 'notificacoes' && <NotificationsTab toast={toast} />}
       {tab === 'config' && <ConfigTab toast={toast} />}
     </div>
@@ -624,121 +622,6 @@ function ClientsTab() {
   );
 }
 
-// ---------------- WhatsApp ----------------
-const WA_LABEL = {
-  disconnected: 'Desconectado',
-  starting: 'Iniciando...',
-  qr: 'Aguardando leitura do QR Code',
-  authenticated: 'Autenticando...',
-  connected: 'Conectado',
-  error: 'Erro na conexão',
-};
-
-function WhatsAppTab({ toast }) {
-  const [st, setSt] = useState(null);
-  const [busy, setBusy] = useState(false);
-
-  const refresh = useCallback(() => api.waStatus().then(setSt).catch(() => {}), []);
-
-  useEffect(() => {
-    refresh();
-    const id = setInterval(refresh, 3000); // acompanha o pareamento em tempo real
-    return () => clearInterval(id);
-  }, [refresh]);
-
-  async function connect() {
-    setBusy(true);
-    try { setSt(await api.waConnect()); toast('Conexão iniciada. Leia o QR Code.'); }
-    catch (e) { toast(e.message, 'err'); }
-    finally { setBusy(false); }
-  }
-  async function logout() {
-    if (!confirm('Desconectar o WhatsApp? Será preciso ler o QR Code novamente.')) return;
-    setBusy(true);
-    try { setSt(await api.waLogout()); toast('WhatsApp desconectado.'); }
-    catch (e) { toast(e.message, 'err'); }
-    finally { setBusy(false); }
-  }
-
-  if (!st) return <Loading />;
-
-  const status = st.status || 'disconnected';
-  const connected = status === 'connected';
-  const dotClass = connected ? 'green' : status === 'error' ? 'red' : 'amber';
-
-  return (
-    <div className="grid grid-2">
-      <div className="card">
-        <div className="row" style={{ gap: 12, marginBottom: 14 }}>
-          <span className="wa-icon"><Smartphone size={22} /></span>
-          <div>
-            <h3 className="display" style={{ fontSize: '1.4rem' }}>Conexão do WhatsApp</h3>
-            <span className="muted" style={{ fontSize: '0.82rem' }}>Envio automático de confirmações e lembretes.</span>
-          </div>
-        </div>
-
-        <div className="wa-status">
-          <span className={`dot ${dotClass}`} />
-          <b>{WA_LABEL[status] || status}</b>
-        </div>
-
-        {connected && st.me && (
-          <p className="muted" style={{ fontSize: '0.86rem', marginTop: 10 }}>
-            Número conectado: <b className="gold">{st.me.name || ''} {st.me.number}</b>
-          </p>
-        )}
-        {status === 'error' && st.error && (
-          <p className="muted" style={{ fontSize: '0.82rem', marginTop: 10, color: 'var(--red)' }}>{st.error}</p>
-        )}
-
-        <div className="row wrap" style={{ gap: 8, marginTop: 18 }}>
-          {!connected && (
-            <button className="btn btn-gold btn-sm" disabled={busy} onClick={connect}>
-              <Power size={15} /> {status === 'disconnected' || status === 'error' ? 'Conectar' : 'Reiniciar'}
-            </button>
-          )}
-          <button className="btn btn-ghost btn-sm" disabled={busy} onClick={refresh}><RefreshCw size={15} /> Atualizar</button>
-          {(connected || status === 'qr' || status === 'authenticated') && (
-            <button className="btn btn-danger btn-sm" disabled={busy} onClick={logout}><Power size={15} /> Desconectar</button>
-          )}
-        </div>
-
-        <p className="muted" style={{ fontSize: '0.78rem', marginTop: 16, lineHeight: 1.6 }}>
-          As mensagens são enviadas do seu próprio número, como no WhatsApp Web.
-          Mantenha o celular com internet. A sessão fica salva — não precisa parear toda vez.
-        </p>
-      </div>
-
-      <div className="card center">
-        {connected ? (
-          <div className="wa-connected">
-            <CheckCircle2 size={56} className="gold" />
-            <h3 className="display" style={{ fontSize: '1.6rem', marginTop: 10 }}>TUDO PRONTO</h3>
-            <p className="muted" style={{ fontSize: '0.88rem' }}>Confirmações e lembretes serão enviados automaticamente.</p>
-          </div>
-        ) : st.qr ? (
-          <>
-            <p className="eyebrow mb">Escaneie com o WhatsApp</p>
-            <img src={st.qr} alt="QR Code do WhatsApp" className="wa-qr" />
-            <p className="muted" style={{ fontSize: '0.8rem', marginTop: 12, lineHeight: 1.6 }}>
-              No celular: <b>WhatsApp → Configurações → Aparelhos conectados → Conectar um aparelho</b>.
-            </p>
-          </>
-        ) : (
-          <div className="wa-empty">
-            <QrCode size={56} className="muted" />
-            <p className="muted" style={{ marginTop: 12, fontSize: '0.9rem' }}>
-              {status === 'starting' || status === 'authenticated'
-                ? 'Gerando QR Code...'
-                : 'Clique em "Conectar" para gerar o QR Code.'}
-            </p>
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
 // ---------------- Notificações ----------------
 const KIND_LABEL = { novo: 'Novo', remarcado: 'Remarcado', cancelado: 'Cancelado', lembrete: 'Lembrete', status: 'Status' };
 
@@ -758,7 +641,7 @@ function NotificationsTab() {
         <div key={n.id} className="card">
           <div className="between mb">
             <div className="row" style={{ gap: 6 }}>
-              <span className="chip"><MessageCircle size={13} /> {KIND_LABEL[n.kind] || 'WhatsApp'}</span>
+              <span className="chip"><MessageCircle size={13} /> {KIND_LABEL[n.kind] || 'Aviso'}</span>
               <span className={`chip ${n.delivered ? 'chip-green' : 'chip-amber'}`}>
                 {n.delivered ? <><CheckCircle2 size={12} /> Enviado</> : (n.deliveryInfo || 'Pendente')}
               </span>

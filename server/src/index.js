@@ -3,7 +3,6 @@ import cors from 'cors';
 import { db, uid } from './db.js';
 import { generateSlots, isSlotFree } from './schedule.js';
 import { pushNotification } from './notify.js';
-import { getStatus as waStatus, initWhatsApp, logoutWhatsApp, hasSavedSession } from './whatsapp.js';
 import { startReminderLoop } from './reminders.js';
 
 const app = express();
@@ -376,22 +375,10 @@ app.post('/api/admin/login', (req, res) => {
 // Reset para dados de demonstração.
 app.post('/api/admin/reset', (req, res) => ok(res, { ok: true, reset: true, ...{ data: db.reset() && undefined } }));
 
-// ----------------------------------------------------------------------------
-// WhatsApp Web (conexão real)
-// ----------------------------------------------------------------------------
-app.get('/api/whatsapp/status', (req, res) => ok(res, waStatus()));
-app.post('/api/whatsapp/connect', (req, res) => ok(res, initWhatsApp()));
-app.post('/api/whatsapp/logout', async (req, res) => ok(res, await logoutWhatsApp()));
-
 // Carrega os dados (Firestore como fonte primária) antes de aceitar requisições.
 await db.init();
 
 app.listen(PORT, () => {
   console.log(`\n  🪒 BarberMan API rodando em http://localhost:${PORT}\n`);
   startReminderLoop();
-  // Reconecta automaticamente se já existe uma sessão pareada.
-  if (hasSavedSession()) {
-    console.log('  📲 Sessão de WhatsApp encontrada — reconectando...');
-    initWhatsApp();
-  }
 });

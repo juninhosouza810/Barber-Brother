@@ -62,9 +62,4 @@ export const api = {
   updateSettings: (b) => req('/settings', { method: 'PUT', body: b }),
   adminLogin: (pin) => req('/admin/login', { method: 'POST', body: { pin } }),
   reset: () => req('/admin/reset', { method: 'POST' }),
-
-  // WhatsApp
-  waStatus: () => req('/whatsapp/status'),
-  waConnect: () => req('/whatsapp/connect', { method: 'POST' }),
-  waLogout: () => req('/whatsapp/logout', { method: 'POST' }),
 };
