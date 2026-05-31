@@ -4,7 +4,7 @@ import { db, uid } from './db.js';
 import { generateSlots, isSlotFree } from './schedule.js';
 import { pushNotification } from './notify.js';
 import { startReminderLoop } from './reminders.js';
-import { requireAuth, resolveShop } from './auth.js';
+import { requireAuth, resolveShop, requireSuperAdmin, requirePlan, isSuperAdmin } from './auth.js';
 
 const app = express();
 app.use(cors());
@@ -27,7 +27,49 @@ const shopSettings = (req) => db.getShop(req.shopId) || {};
 // ----------------------------------------------------------------------------
 app.get('/api/me', requireAuth, (req, res) => {
   const shop = db.getShop(req.shopId) || {};
-  ok(res, { shopId: req.shopId, email: req.shopEmail, shopName: shop.shopName || '' });
+  ok(res, {
+    shopId: req.shopId,
+    email: req.shopEmail,
+    shopName: shop.shopName || '',
+    plan: shop.plan || 'agendamento',
+    assinaturaAtiva: shop.assinaturaAtiva !== false,
+    vencimento: shop.vencimento || null,
+    isSuperAdmin: isSuperAdmin(req.shopEmail),
+  });
+});
+
+// ----------------------------------------------------------------------------
+// Super-admin (dono do sistema) — gestão das barbearias / assinaturas
+// ----------------------------------------------------------------------------
+const PLAN_PRICE = { agendamento: 29.9, completo: 54.9 };
+
+app.get('/api/admin/shops', requireSuperAdmin, (req, res) => {
+  const data = db.get();
+  const list = data.shops.map((s) => ({
+    id: s.id,
+    email: s.email || '',
+    shopName: s.shopName || '',
+    plan: s.plan || 'agendamento',
+    planPrice: PLAN_PRICE[s.plan] ?? PLAN_PRICE.agendamento,
+    assinaturaAtiva: s.assinaturaAtiva !== false,
+    vencimento: s.vencimento || null,
+    criadoEm: s.criadoEm || null,
+    agendamentos: data.appointments.filter((a) => a.shopId === s.id).length,
+  }));
+  list.sort((a, b) => (b.criadoEm || '').localeCompare(a.criadoEm || ''));
+  ok(res, list);
+});
+
+app.put('/api/admin/shops/:id', requireSuperAdmin, (req, res) => {
+  const data = db.get();
+  const shop = data.shops.find((s) => s.id === req.params.id);
+  if (!shop) return bad(res, 'Barbearia não encontrada.', 404);
+  const { plan, assinaturaAtiva, vencimento } = req.body;
+  if (plan != null) shop.plan = plan === 'completo' ? 'completo' : 'agendamento';
+  if (assinaturaAtiva != null) shop.assinaturaAtiva = !!assinaturaAtiva;
+  if (vencimento !== undefined) shop.vencimento = vencimento || null;
+  db.save();
+  ok(res, shop);
 });
 
 // ----------------------------------------------------------------------------
@@ -337,6 +379,29 @@ app.patch('/api/appointments/:id', resolveShop, (req, res) => {
   if (status != null) { appt.status = status; if (status === 'cancelado') kind = 'cancelado'; }
   if (rescheduled) appt.reminderSent = false;
 
+  // Plano completo: ao CONCLUIR o atendimento, o valor do serviço entra no
+  // caixa automaticamente (uma única vez por agendamento).
+  if (appt.status === 'concluido' && !appt.lancadoNoCaixa) {
+    const shop = db.getShop(req.shopId);
+    if (shop && shop.plan === 'completo') {
+      const svc = data.services.find((s) => s.id === appt.serviceId && s.shopId === req.shopId);
+      const valor = svc ? Number(svc.price) || 0 : 0;
+      const aberto = data.caixas.find((c) => c.shopId === req.shopId && c.status === 'aberto');
+      data.movimentos.push({
+        id: 'mov-' + uid(),
+        shopId: req.shopId,
+        caixaId: aberto ? aberto.id : null,
+        tipo: 'entrada',
+        valor,
+        descricao: `Atendimento — ${appt.clientName}${svc ? ' · ' + svc.name : ''}`,
+        apptId: appt.id,
+        metodo: req.body.metodo || '',
+        data: new Date().toISOString(),
+      });
+      appt.lancadoNoCaixa = true;
+    }
+  }
+
   db.save();
   const notification = pushNotification(appt, kind);
   ok(res, { appointment: decorate(appt), notification });
@@ -394,6 +459,86 @@ app.put('/api/settings', requireAuth, (req, res) => {
 app.post('/api/admin/reset', requireAuth, (req, res) => {
   const shop = db.resetShop(req.shopId);
   ok(res, { ok: true, reset: true, shop });
+});
+
+// ----------------------------------------------------------------------------
+// Caixa / Financeiro (PDV) — exclusivo do plano "completo"
+// ----------------------------------------------------------------------------
+const completo = [requireAuth, requirePlan('completo')];
+
+function saldoEsperado(caixa, movimentos) {
+  let saldo = Number(caixa.saldoInicial) || 0;
+  for (const m of movimentos) {
+    if (m.caixaId !== caixa.id) continue;
+    if (m.tipo === 'entrada' || m.tipo === 'suprimento') saldo += Number(m.valor) || 0;
+    else if (m.tipo === 'saida' || m.tipo === 'sangria') saldo -= Number(m.valor) || 0;
+  }
+  return saldo;
+}
+
+app.get('/api/caixa/atual', ...completo, (req, res) => {
+  const data = db.get();
+  const caixa = data.caixas.find((c) => c.shopId === req.shopId && c.status === 'aberto') || null;
+  const movimentos = caixa
+    ? data.movimentos.filter((m) => m.shopId === req.shopId && m.caixaId === caixa.id).sort((a, b) => (b.data || '').localeCompare(a.data || ''))
+    : [];
+  ok(res, { caixa, movimentos, saldoEsperado: caixa ? saldoEsperado(caixa, data.movimentos.filter((m) => m.shopId === req.shopId)) : 0 });
+});
+
+app.post('/api/caixa/abrir', ...completo, (req, res) => {
+  const data = db.get();
+  if (data.caixas.some((c) => c.shopId === req.shopId && c.status === 'aberto')) return bad(res, 'Já existe um caixa aberto.');
+  const caixa = {
+    id: 'cx-' + uid(), shopId: req.shopId, status: 'aberto',
+    saldoInicial: Number(req.body.saldoInicial) || 0,
+    abertoEm: new Date().toISOString(), fechadoEm: null, saldoFinal: null, diferenca: null,
+  };
+  data.caixas.push(caixa);
+  db.save();
+  ok(res, caixa);
+});
+
+app.post('/api/caixa/fechar', ...completo, (req, res) => {
+  const data = db.get();
+  const caixa = data.caixas.find((c) => c.shopId === req.shopId && c.status === 'aberto');
+  if (!caixa) return bad(res, 'Nenhum caixa aberto.');
+  const esperado = saldoEsperado(caixa, data.movimentos.filter((m) => m.shopId === req.shopId));
+  const contado = Number(req.body.saldoFinal) || 0;
+  Object.assign(caixa, { status: 'fechado', fechadoEm: new Date().toISOString(), saldoEsperado: esperado, saldoFinal: contado, diferenca: contado - esperado });
+  db.save();
+  ok(res, caixa);
+});
+
+app.post('/api/caixa/movimento', ...completo, (req, res) => {
+  const data = db.get();
+  const { tipo, valor, descricao } = req.body;
+  if (!['sangria', 'suprimento'].includes(tipo)) return bad(res, 'Tipo inválido (use sangria ou suprimento).');
+  if (!(Number(valor) > 0)) return bad(res, 'Informe um valor válido.');
+  const caixa = data.caixas.find((c) => c.shopId === req.shopId && c.status === 'aberto');
+  if (!caixa) return bad(res, 'Abra o caixa primeiro.');
+  const mov = { id: 'mov-' + uid(), shopId: req.shopId, caixaId: caixa.id, tipo, valor: Number(valor), descricao: descricao || '', data: new Date().toISOString() };
+  data.movimentos.push(mov);
+  db.save();
+  ok(res, mov);
+});
+
+app.get('/api/caixa/historico', ...completo, (req, res) => {
+  const data = db.get();
+  const list = data.caixas.filter((c) => c.shopId === req.shopId).sort((a, b) => (b.abertoEm || '').localeCompare(a.abertoEm || '')).slice(0, 20);
+  ok(res, list);
+});
+
+app.get('/api/financeiro/resumo', ...completo, (req, res) => {
+  const data = db.get();
+  const { de, ate } = req.query;
+  let movs = data.movimentos.filter((m) => m.shopId === req.shopId && m.tipo === 'entrada');
+  if (de) movs = movs.filter((m) => (m.data || '').slice(0, 10) >= de);
+  if (ate) movs = movs.filter((m) => (m.data || '').slice(0, 10) <= ate);
+  const receita = movs.reduce((s, m) => s + (Number(m.valor) || 0), 0);
+  const qtd = movs.length;
+  const porMetodo = {};
+  for (const m of movs) { const k = m.metodo || 'Não informado'; porMetodo[k] = (porMetodo[k] || 0) + (Number(m.valor) || 0); }
+  ok(res, { receita, qtd, ticket: qtd ? receita / qtd : 0, porMetodo });
 });
 
 // Carrega os dados (Firestore como fonte primária) antes de aceitar requisições.

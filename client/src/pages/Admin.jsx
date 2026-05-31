@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import {
   Shield, LayoutDashboard, CalendarRange, Scissors, Users, Bell, Settings as Cog,
   Plus, Trash2, Pencil, Check, X, MessageCircle, RotateCcw, LogOut, ArrowLeft, Clock, CalendarPlus,
-  CheckCircle2, CalendarOff, Ban, Sun,
+  CheckCircle2, CalendarOff, Ban, Sun, Wallet, TrendingUp, Crown, ArrowDownCircle, ArrowUpCircle, Lock,
 } from 'lucide-react';
 import { api } from '../api.js';
 import { auth } from '../firebase.js';
@@ -14,20 +14,33 @@ import { Avatar, StatusBadge, Loading, Empty, Modal, useToast } from '../ui.jsx'
 export default function Admin() {
   const toast = useToast();
   const [user, setUser] = useState(undefined); // undefined = carregando; null = deslogado
+  const [me, setMe] = useState(null);
   const [tab, setTab] = useState('agenda');
 
   useEffect(() => onAuthStateChanged(auth, setUser), []);
+  useEffect(() => {
+    if (user) api.me().then(setMe).catch(() => setMe(null));
+    else setMe(null);
+  }, [user]);
 
   if (user === undefined) return <div className="container block center" style={{ paddingTop: 80 }}><Loading /></div>;
   if (!user) return <LoginGate />;
+
+  const isCompleto = me?.plan === 'completo';
+  const isSuper = !!me?.isSuperAdmin;
 
   const tabs = [
     { id: 'agenda', label: 'Agenda', icon: CalendarRange },
     { id: 'servicos', label: 'Serviços', icon: Scissors },
     { id: 'barbeiros', label: 'Barbeiros', icon: Users },
     { id: 'clientes', label: 'Clientes', icon: LayoutDashboard },
+    ...(isCompleto ? [
+      { id: 'caixa', label: 'Caixa', icon: Wallet },
+      { id: 'financeiro', label: 'Financeiro', icon: TrendingUp },
+    ] : []),
     { id: 'notificacoes', label: 'Notificações', icon: Bell },
     { id: 'config', label: 'Config', icon: Cog },
+    ...(isSuper ? [{ id: 'sistema', label: 'Sistema', icon: Crown }] : []),
   ];
 
   return (
@@ -37,7 +50,10 @@ export default function Admin() {
           <span className="brand-mark">B</span>
           <div>
             <div className="brand-name" style={{ fontSize: '1.3rem' }}>Barber<b className="gold">Man</b> Admin</div>
-            <span className="muted" style={{ fontSize: '0.78rem' }}>Painel de controle</span>
+            <span className="muted" style={{ fontSize: '0.78rem' }}>
+              {me?.shopName || 'Painel de controle'}
+              {me && <> · <b className="gold">{me.plan === 'completo' ? 'Plano Completo' : 'Plano Agendamento'}</b></>}
+            </span>
           </div>
         </div>
         <div className="row" style={{ gap: 8 }}>
@@ -54,12 +70,15 @@ export default function Admin() {
         ))}
       </div>
 
-      {tab === 'agenda' && <AgendaTab toast={toast} />}
+      {tab === 'agenda' && <AgendaTab toast={toast} completo={isCompleto} />}
       {tab === 'servicos' && <ServicesTab toast={toast} />}
       {tab === 'barbeiros' && <BarbersTab toast={toast} />}
       {tab === 'clientes' && <ClientsTab toast={toast} />}
+      {tab === 'caixa' && isCompleto && <CaixaTab toast={toast} />}
+      {tab === 'financeiro' && isCompleto && <FinanceiroTab toast={toast} />}
       {tab === 'notificacoes' && <NotificationsTab toast={toast} />}
       {tab === 'config' && <ConfigTab toast={toast} />}
+      {tab === 'sistema' && isSuper && <SuperAdminTab toast={toast} />}
     </div>
   );
 }
@@ -104,7 +123,7 @@ function LoginGate() {
 }
 
 // ---------------- Agenda / Agendamentos ----------------
-function AgendaTab({ toast }) {
+function AgendaTab({ toast, completo }) {
   const [appts, setAppts] = useState(null);
   const [barbers, setBarbers] = useState([]);
   const [services, setServices] = useState([]);
@@ -164,7 +183,7 @@ function AgendaTab({ toast }) {
         <div className="grid grid-2" style={{ gap: 10 }}>
           <Select label="Barbeiro" value={filter.barberId} onChange={(v) => setFilter({ ...filter, barberId: v })} options={[['', 'Todos']].concat(barbers.map((b) => [b.id, b.name]))} />
           <Select label="Serviço" value={filter.serviceId} onChange={(v) => setFilter({ ...filter, serviceId: v })} options={[['', 'Todos']].concat(services.map((s) => [s.id, s.name]))} />
-          <Select label="Status" value={filter.status} onChange={(v) => setFilter({ ...filter, status: v })} options={[['', 'Todos'], ['pendente', 'Pendente'], ['confirmado', 'Confirmado'], ['cancelado', 'Cancelado']]} />
+          <Select label="Status" value={filter.status} onChange={(v) => setFilter({ ...filter, status: v })} options={[['', 'Todos'], ['pendente', 'Pendente'], ['confirmado', 'Confirmado'], ['concluido', 'Concluído'], ['cancelado', 'Cancelado']]} />
           <div className="field" style={{ margin: 0 }}>
             <label>Data</label>
             <input type="date" value={filter.date} onChange={(e) => setFilter({ ...filter, date: e.target.value })} />
@@ -197,8 +216,9 @@ function AgendaTab({ toast }) {
               {a.notes && <p className="muted" style={{ fontSize: '0.84rem', marginTop: 8 }}>Obs.: {a.notes}</p>}
               <div className="divider" />
               <div className="row wrap" style={{ gap: 8 }}>
-                {a.status !== 'confirmado' && <button className="btn btn-gold btn-sm" onClick={() => setStatus(a, 'confirmado')}><Check size={15} /> Confirmar</button>}
-                {a.status !== 'cancelado' && <button className="btn btn-ghost btn-sm" onClick={() => setStatus(a, 'cancelado')}><X size={15} /> Cancelar</button>}
+                {a.status !== 'confirmado' && a.status !== 'concluido' && <button className="btn btn-gold btn-sm" onClick={() => setStatus(a, 'confirmado')}><Check size={15} /> Confirmar</button>}
+                {a.status !== 'concluido' && a.status !== 'cancelado' && <button className="btn btn-gold btn-sm" onClick={() => setStatus(a, 'concluido')} title={completo ? 'Conclui e lança o valor no caixa' : 'Marca como atendido'}><CheckCircle2 size={15} /> Concluir{completo ? ' (→ caixa)' : ''}</button>}
+                {a.status !== 'cancelado' && a.status !== 'concluido' && <button className="btn btn-ghost btn-sm" onClick={() => setStatus(a, 'cancelado')}><X size={15} /> Cancelar</button>}
                 <button className="btn btn-ghost btn-sm" onClick={() => setEditing(a)}><RotateCcw size={15} /> Remarcar</button>
                 <button className="btn btn-danger btn-sm" onClick={() => remove(a)}><Trash2 size={15} /></button>
               </div>
@@ -730,6 +750,200 @@ function ConfigTab({ toast }) {
         <button className="btn btn-gold" disabled={saving} onClick={save}><Check size={16} /> {saving ? 'Salvando...' : 'Salvar configurações'}</button>
         <button className="btn btn-danger" onClick={reset}><RotateCcw size={16} /> Restaurar dados de demonstração</button>
       </div>
+    </div>
+  );
+}
+
+// ---------------- Caixa (PDV) ----------------
+function CaixaTab({ toast }) {
+  const [data, setData] = useState(null);
+  const [hist, setHist] = useState([]);
+  const [saldoInicial, setSaldoInicial] = useState('');
+  const [saldoFinal, setSaldoFinal] = useState('');
+  const [mov, setMov] = useState({ tipo: 'suprimento', valor: '', descricao: '' });
+
+  const load = useCallback(async () => {
+    const [atual, historico] = await Promise.all([api.caixaAtual(), api.historicoCaixa()]);
+    setData(atual); setHist(historico);
+  }, []);
+  useEffect(() => { load().catch((e) => toast(e.message, 'err')); }, [load]);
+
+  async function abrir() {
+    try { await api.abrirCaixa(Number(saldoInicial) || 0); setSaldoInicial(''); toast('Caixa aberto.'); load(); }
+    catch (e) { toast(e.message, 'err'); }
+  }
+  async function fechar() {
+    if (!confirm('Fechar o caixa agora?')) return;
+    try { await api.fecharCaixa(Number(saldoFinal) || 0); setSaldoFinal(''); toast('Caixa fechado.'); load(); }
+    catch (e) { toast(e.message, 'err'); }
+  }
+  async function lancar() {
+    if (!(Number(mov.valor) > 0)) return toast('Informe um valor.', 'err');
+    try { await api.movimentoCaixa({ tipo: mov.tipo, valor: Number(mov.valor), descricao: mov.descricao }); setMov({ tipo: mov.tipo, valor: '', descricao: '' }); toast('Movimentação registrada.'); load(); }
+    catch (e) { toast(e.message, 'err'); }
+  }
+
+  if (!data) return <Loading />;
+  const { caixa, movimentos, saldoEsperado } = data;
+
+  if (!caixa) {
+    return (
+      <div className="grid" style={{ maxWidth: 460 }}>
+        <div className="card">
+          <h3 className="display mb" style={{ fontSize: '1.4rem' }}>Abrir caixa</h3>
+          <p className="muted mb" style={{ fontSize: '0.85rem' }}>Informe o valor inicial (troco) para abrir o caixa do dia.</p>
+          <Field label="Saldo inicial (R$)" type="number" value={saldoInicial} onChange={setSaldoInicial} placeholder="0" />
+          <button className="btn btn-gold btn-block" onClick={abrir}><Wallet size={16} /> Abrir caixa</button>
+        </div>
+        {hist.length > 0 && <CaixaHistorico hist={hist} />}
+      </div>
+    );
+  }
+
+  return (
+    <div className="grid grid-2">
+      <div className="card">
+        <div className="between mb"><h3 className="display" style={{ fontSize: '1.4rem' }}>Caixa aberto</h3><span className="chip chip-green">Aberto</span></div>
+        <div className="stat-cards" style={{ marginBottom: 12 }}>
+          <div className="card stat-card"><b>{BRL(caixa.saldoInicial)}</b><small>Inicial</small></div>
+          <div className="card stat-card"><b className="gold" style={{ fontSize: '1.4rem' }}>{BRL(saldoEsperado)}</b><small>Saldo esperado</small></div>
+        </div>
+        <div className="grid grid-2" style={{ gap: 10 }}>
+          <Select label="Tipo" value={mov.tipo} onChange={(v) => setMov({ ...mov, tipo: v })} options={[['suprimento', 'Suprimento (entrada)'], ['sangria', 'Sangria (saída)']]} />
+          <Field label="Valor (R$)" type="number" value={mov.valor} onChange={(v) => setMov({ ...mov, valor: v })} />
+        </div>
+        <Field label="Descrição" value={mov.descricao} onChange={(v) => setMov({ ...mov, descricao: v })} placeholder="Ex.: reforço de troco" />
+        <button className="btn btn-ghost btn-block" onClick={lancar}><Plus size={15} /> Registrar movimentação</button>
+        <div className="divider" />
+        <Field label="Saldo contado no fechamento (R$)" type="number" value={saldoFinal} onChange={setSaldoFinal} />
+        <button className="btn btn-danger btn-block" onClick={fechar}><Lock size={15} /> Fechar caixa</button>
+      </div>
+      <div className="card">
+        <h3 className="display mb" style={{ fontSize: '1.4rem' }}>Movimentações</h3>
+        {movimentos.length === 0 ? <Empty icon={Wallet} title="Sem movimentações" hint="Atendimentos concluídos e lançamentos aparecem aqui." /> : (
+          <div className="grid" style={{ gap: 8 }}>
+            {movimentos.map((m) => {
+              const entrada = m.tipo === 'entrada' || m.tipo === 'suprimento';
+              return (
+                <div key={m.id} className="between" style={{ gap: 8, padding: '8px 0', borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
+                  <span className="row" style={{ gap: 8 }}>
+                    {entrada ? <ArrowUpCircle size={18} className="gold" /> : <ArrowDownCircle size={18} />}
+                    <span style={{ fontSize: '0.85rem' }}>{m.descricao || (entrada ? 'Entrada' : 'Saída')}</span>
+                  </span>
+                  <b className={entrada ? 'gold' : ''}>{entrada ? '+' : '−'} {BRL(m.valor)}</b>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+      {hist.length > 0 && <div style={{ gridColumn: '1 / -1' }}><CaixaHistorico hist={hist} /></div>}
+    </div>
+  );
+}
+
+function CaixaHistorico({ hist }) {
+  const fechados = hist.filter((c) => c.status === 'fechado');
+  if (fechados.length === 0) return null;
+  return (
+    <div className="card">
+      <h3 className="display mb" style={{ fontSize: '1.2rem' }}>Histórico de caixas</h3>
+      <div className="grid" style={{ gap: 6 }}>
+        {fechados.map((c) => (
+          <div key={c.id} className="between" style={{ fontSize: '0.82rem', padding: '6px 0', borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
+            <span className="muted">{new Date(c.abertoEm).toLocaleDateString('pt-BR')}</span>
+            <span>Esperado {BRL(c.saldoEsperado)} · Contado {BRL(c.saldoFinal)}</span>
+            <b style={Math.abs(c.diferenca || 0) < 0.01 ? {} : { color: 'var(--red)' }}>{(c.diferenca || 0) > 0 ? '+' : ''}{BRL(c.diferenca || 0)}</b>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ---------------- Financeiro ----------------
+function FinanceiroTab({ toast }) {
+  const hoje = new Date();
+  const ini = `${hoje.getFullYear()}-${String(hoje.getMonth() + 1).padStart(2, '0')}-01`;
+  const [range, setRange] = useState({ de: ini, ate: toISODate(hoje) });
+  const [data, setData] = useState(null);
+
+  const load = useCallback(async () => { setData(await api.financeiro(range.de, range.ate)); }, [range]);
+  useEffect(() => { load().catch((e) => toast(e.message, 'err')); }, [load]);
+
+  return (
+    <div>
+      <div className="card mb">
+        <div className="grid grid-2" style={{ gap: 10 }}>
+          <div className="field" style={{ margin: 0 }}><label>De</label><input type="date" value={range.de} onChange={(e) => setRange({ ...range, de: e.target.value })} /></div>
+          <div className="field" style={{ margin: 0 }}><label>Até</label><input type="date" value={range.ate} onChange={(e) => setRange({ ...range, ate: e.target.value })} /></div>
+        </div>
+      </div>
+      {!data ? <Loading /> : (
+        <>
+          <div className="stat-cards">
+            <div className="card stat-card"><b className="gold" style={{ fontSize: '1.5rem' }}>{BRL(data.receita)}</b><small>Receita</small></div>
+            <div className="card stat-card"><b>{data.qtd}</b><small>Atendimentos</small></div>
+            <div className="card stat-card"><b>{BRL(data.ticket)}</b><small>Ticket médio</small></div>
+          </div>
+          <div className="card mt">
+            <h3 className="display mb" style={{ fontSize: '1.2rem' }}>Receita por método</h3>
+            {Object.keys(data.porMetodo || {}).length === 0
+              ? <Empty icon={TrendingUp} title="Sem receita no período" hint="Conclua atendimentos para gerar receita no caixa." />
+              : (
+                <div className="grid" style={{ gap: 6 }}>
+                  {Object.entries(data.porMetodo).map(([metodo, valor]) => (
+                    <div key={metodo} className="between" style={{ padding: '6px 0', borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
+                      <span>{metodo}</span><b className="gold">{BRL(valor)}</b>
+                    </div>
+                  ))}
+                </div>
+              )}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+// ---------------- Super-admin (dono do sistema) ----------------
+function SuperAdminTab({ toast }) {
+  const [shops, setShops] = useState(null);
+  const load = useCallback(() => api.adminShops().then(setShops).catch((e) => toast(e.message, 'err')), [toast]);
+  useEffect(() => { load(); }, [load]);
+
+  async function update(id, patch) {
+    try { await api.adminUpdateShop(id, patch); toast('Barbearia atualizada.'); load(); }
+    catch (e) { toast(e.message, 'err'); }
+  }
+  if (!shops) return <Loading />;
+  return (
+    <div>
+      <div className="card mb">
+        <h3 className="display" style={{ fontSize: '1.4rem' }}>Gestão de assinaturas</h3>
+        <p className="muted" style={{ fontSize: '0.85rem' }}>Defina o plano e ative/bloqueie cada barbearia. Agendamento <b className="gold">R$ 29,90</b> · Completo <b className="gold">R$ 54,90</b>.</p>
+      </div>
+      {shops.length === 0 ? <Empty icon={Crown} title="Nenhuma barbearia ainda" hint="As contas aparecem aqui após o primeiro login." /> : (
+        <div className="grid">
+          {shops.map((s) => (
+            <div key={s.id} className="card">
+              <div className="between mb">
+                <div>
+                  <b>{s.shopName || '(sem nome)'}</b>
+                  <div className="muted" style={{ fontSize: '0.8rem' }}>{s.email || s.id} · {s.agendamentos} agend.</div>
+                </div>
+                <span className={`chip ${s.assinaturaAtiva ? 'chip-green' : 'chip-amber'}`}>{s.assinaturaAtiva ? 'Ativa' : 'Bloqueada'}</span>
+              </div>
+              <div className="row wrap" style={{ gap: 8, alignItems: 'flex-end' }}>
+                <Select label="Plano" value={s.plan} onChange={(v) => update(s.id, { plan: v })} options={[['agendamento', 'Agendamento (R$ 29,90)'], ['completo', 'Completo (R$ 54,90)']]} />
+                {s.assinaturaAtiva
+                  ? <button className="btn btn-danger btn-sm" onClick={() => update(s.id, { assinaturaAtiva: false })}><Ban size={15} /> Bloquear</button>
+                  : <button className="btn btn-gold btn-sm" onClick={() => update(s.id, { assinaturaAtiva: true })}><Check size={15} /> Ativar</button>}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

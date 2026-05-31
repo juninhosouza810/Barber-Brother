@@ -17,6 +17,9 @@ services:
     envVars:
       - key: NODE_ENV
         value: production
+      # E-mail do dono do sistema (super-admin) — gestão de assinaturas.
+      - key: SUPER_ADMIN_EMAIL
+        value: juninhosouza810@gmail.com
       # Cole o conteúdo do serviceAccountKey.json aqui pelo painel (Secret).
       - key: FIREBASE_SERVICE_ACCOUNT
         sync: false

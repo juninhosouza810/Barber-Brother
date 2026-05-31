@@ -88,4 +88,19 @@ export const api = {
   settings: () => req('/settings'),
   updateSettings: (b) => req('/settings', { method: 'PUT', body: b }),
   reset: () => req('/admin/reset', { method: 'POST' }),
+
+  // Caixa / Financeiro (plano completo)
+  caixaAtual: () => req('/caixa/atual'),
+  abrirCaixa: (saldoInicial) => req('/caixa/abrir', { method: 'POST', body: { saldoInicial } }),
+  fecharCaixa: (saldoFinal) => req('/caixa/fechar', { method: 'POST', body: { saldoFinal } }),
+  movimentoCaixa: (b) => req('/caixa/movimento', { method: 'POST', body: b }),
+  historicoCaixa: () => req('/caixa/historico'),
+  financeiro: (de, ate) => {
+    const q = new URLSearchParams({ ...(de ? { de } : {}), ...(ate ? { ate } : {}) }).toString();
+    return req(`/financeiro/resumo${q ? `?${q}` : ''}`);
+  },
+
+  // Super-admin (dono do sistema)
+  adminShops: () => req('/admin/shops'),
+  adminUpdateShop: (id, b) => req(`/admin/shops/${id}`, { method: 'PUT', body: b }),
 };

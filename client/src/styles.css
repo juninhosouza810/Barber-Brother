@@ -228,6 +228,7 @@ section.block { padding: 38px 0; }
 }
 .badge.pendente { background: rgba(240, 180, 41, 0.14); color: var(--amber); }
 .badge.confirmado { background: rgba(62, 207, 142, 0.14); color: var(--green); }
+.badge.concluido { background: rgba(212, 175, 55, 0.16); color: var(--gold, #d4af37); }
 .badge.cancelado { background: rgba(239, 83, 80, 0.14); color: var(--red); }
 
 /* Summary bar (booking footer) */

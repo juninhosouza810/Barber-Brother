@@ -12,7 +12,7 @@ export const uid = () => randomUUID().slice(0, 8);
 
 // Coleções de dados (cada documento carrega um campo shopId).
 // `shops` guarda as configurações de cada barbearia (doc id = shopId).
-const ARRAY_KEYS = ['clients', 'services', 'barbers', 'availability', 'blocks', 'appointments', 'notifications', 'shops'];
+const ARRAY_KEYS = ['clients', 'services', 'barbers', 'availability', 'blocks', 'appointments', 'notifications', 'shops', 'caixas', 'movimentos'];
 
 // Estado inicial vazio. Cada barbearia é provisionada sob demanda (ver ensureShop).
 function emptyState() {
@@ -26,6 +26,7 @@ function emptyState() {
 function defaultShop(shopId) {
   return {
     id: shopId,
+    email: '',
     shopName: 'Minha Barbearia',
     slogan: 'Estilo, precisão e atitude.',
     phone: '',
@@ -36,6 +37,11 @@ function defaultShop(shopId) {
     closeTime: '19:00',
     cancelPolicyHours: 2, // cancelar/remarcar com X horas de antecedência
     policies: 'Tolerância de 10 minutos de atraso. Cancelamentos com no mínimo 2h de antecedência.',
+    // Assinatura: "agendamento" (R$ 29,90) ou "completo" (R$ 54,90, com PDV/Caixa).
+    plan: 'agendamento',
+    assinaturaAtiva: true,
+    vencimento: null,
+    criadoEm: new Date().toISOString(),
   };
 }
 
@@ -95,14 +101,25 @@ function ensureLoaded() {
  * `shops` (configurações padrão) e um catálogo de serviços de exemplo.
  * Idempotente: não faz nada se a barbearia já existe.
  */
-function ensureShop(shopId) {
+function ensureShop(shopId, email) {
   if (!shopId) return;
   ensureLoaded();
-  if (cache.shops.some((s) => s.id === shopId)) return;
-  cache.shops.push(defaultShop(shopId));
-  cache.services.push(...seedServices(shopId));
-  persistJSON();
-  scheduleSync();
+  const existing = cache.shops.find((s) => s.id === shopId);
+  if (!existing) {
+    const shop = defaultShop(shopId);
+    if (email) shop.email = email;
+    cache.shops.push(shop);
+    cache.services.push(...seedServices(shopId));
+    persistJSON();
+    scheduleSync();
+    return;
+  }
+  // Mantém o e-mail do dono atualizado (aparece no painel super-admin).
+  if (email && existing.email !== email) {
+    existing.email = email;
+    persistJSON();
+    scheduleSync();
+  }
 }
 
 /** Configurações (doc) de uma barbearia. */
@@ -175,7 +192,7 @@ export const db = {
   // Restaura uma barbearia ao estado inicial (remove seus dados e re-popula o seed).
   resetShop(shopId) {
     ensureLoaded();
-    for (const k of ['clients', 'services', 'barbers', 'availability', 'blocks', 'appointments', 'notifications']) {
+    for (const k of ['clients', 'services', 'barbers', 'availability', 'blocks', 'appointments', 'notifications', 'caixas', 'movimentos']) {
       cache[k] = cache[k].filter((x) => x.shopId !== shopId);
     }
     cache.shops = cache.shops.filter((s) => s.id !== shopId);
