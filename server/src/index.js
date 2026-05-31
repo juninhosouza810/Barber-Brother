@@ -247,6 +247,7 @@ app.get('/api/appointments', resolveShop, (req, res) => {
 });
 
 app.post('/api/appointments', resolveShop, (req, res) => {
+  if (!req.shopId) return bad(res, 'Barbearia não identificada.');
   const data = db.get();
   const { clientName, clientPhone, clientEmail, serviceId, barberId, date, time, notes } = req.body;
   if (!clientName || !clientPhone || !serviceId || !barberId || !date || !time) {

@@ -36,8 +36,10 @@ export async function resolveShop(req, res, next) {
       return next();
     } catch { /* token inválido: tenta o parâmetro público abaixo */ }
   }
+  // Sem login: identifica a barbearia pelo ?shop=<id> (ou shopId no corpo).
+  // Não bloqueia aqui — fica null e as rotas de leitura devolvem lista vazia;
+  // as rotas de escrita validam a presença do shopId individualmente.
   const shopId = req.query.shop || (req.body && req.body.shopId);
-  if (!shopId) return res.status(400).json({ error: 'Barbearia não identificada.' });
-  req.shopId = String(shopId);
+  req.shopId = shopId ? String(shopId) : null;
   next();
 }
