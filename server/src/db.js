@@ -10,79 +10,46 @@ const DB_FILE = path.join(DATA_DIR, 'db.json');
 
 export const uid = () => randomUUID().slice(0, 8);
 
-/**
- * Dados iniciais (seed) da BarberMan.
- * weekday: 0=Dom, 1=Seg, ... 6=Sáb
- */
-function seedData() {
-  const services = [
-    { id: 'svc-corte', name: 'Corte Masculino', category: 'Cabelo', durationMin: 40, price: 50, description: 'Corte na tesoura ou máquina com acabamento na navalha.' },
-    { id: 'svc-barba', name: 'Barba Completa', category: 'Barba', durationMin: 30, price: 40, description: 'Toalha quente, modelagem e finalização com produtos premium.' },
-    { id: 'svc-combo', name: 'Combo Corte + Barba', category: 'Combos', durationMin: 60, price: 80, description: 'O pacote completo do cavalheiro: corte e barba alinhados.' },
-    { id: 'svc-pigment', name: 'Pigmentação', category: 'Estética', durationMin: 45, price: 60, description: 'Disfarce de falhas e definição de contorno com pigmento.' },
-    { id: 'svc-sobrancelha', name: 'Sobrancelha', category: 'Estética', durationMin: 15, price: 20, description: 'Design e limpeza de sobrancelha na navalha.' },
-    { id: 'svc-platinado', name: 'Platinado / Luzes', category: 'Cabelo', durationMin: 90, price: 150, description: 'Descoloração e tonalização com proteção do fio.' },
-    { id: 'svc-infantil', name: 'Corte Infantil', category: 'Cabelo', durationMin: 30, price: 40, description: 'Atendimento paciente e divertido para os pequenos.' },
-    { id: 'svc-vip', name: 'Combo VIP', category: 'Combos', durationMin: 90, price: 130, description: 'Corte, barba, sobrancelha e hidratação. Experiência completa.' },
-  ];
+// Coleções de dados (cada documento carrega um campo shopId).
+// `shops` guarda as configurações de cada barbearia (doc id = shopId).
+const ARRAY_KEYS = ['clients', 'services', 'barbers', 'availability', 'blocks', 'appointments', 'notifications', 'shops'];
 
-  const barbers = [
-    {
-      id: 'brb-rafael',
-      name: 'Rafael Lima',
-      photo: 'https://images.unsplash.com/photo-1503443207922-dff7d543fd0e?w=400&q=80',
-      role: 'Master Barber',
-      specialties: ['Corte Masculino', 'Barba Completa', 'Pigmentação'],
-      bio: 'Mais de 10 anos de estrada e referência em fade e barba desenhada.',
-      rating: 4.9,
-    },
-    {
-      id: 'brb-diego',
-      name: 'Diego Souza',
-      photo: 'https://images.unsplash.com/photo-1599351431202-1e0f0137899a?w=400&q=80',
-      role: 'Barber Stylist',
-      specialties: ['Platinado / Luzes', 'Corte Masculino', 'Sobrancelha'],
-      bio: 'Especialista em colorimetria e cortes modernos.',
-      rating: 4.8,
-    },
-    {
-      id: 'brb-marcos',
-      name: 'Marcos Antônio',
-      photo: 'https://images.unsplash.com/photo-1622286342621-4bd786c2447c?w=400&q=80',
-      role: 'Barbeiro Sênior',
-      specialties: ['Combo Corte + Barba', 'Corte Infantil', 'Barba Completa'],
-      bio: 'Atendimento clássico, navalha afiada e mão firme.',
-      rating: 4.9,
-    },
-  ];
-
-  // Disponibilidade padrão: Seg-Sex 09-19, Sáb 09-17
-  const availability = [];
-  for (const b of barbers) {
-    for (let d = 1; d <= 5; d++) {
-      availability.push({ id: uid(), barberId: b.id, weekday: d, startTime: '09:00', endTime: '19:00' });
-    }
-    availability.push({ id: uid(), barberId: b.id, weekday: 6, startTime: '09:00', endTime: '17:00' });
-  }
-
-  const settings = {
-    shopName: 'BarberMan',
-    slogan: 'Estilo, precisão e atitude.',
-    phone: '5511999990000',
-    address: 'Rua dos Cavalheiros, 123 - Centro',
-    slotStep: 15,          // granularidade dos horários (min)
-    bufferMin: 0,          // intervalo entre atendimentos (min)
-    openTime: '09:00',
-    closeTime: '19:00',
-    cancelPolicyHours: 2,  // cancelar/remarcar com X horas de antecedência
-    adminPin: '1234',
-    policies: 'Tolerância de 10 minutos de atraso. Cancelamentos com no mínimo 2h de antecedência.',
-  };
-
-  return { clients: [], services, barbers, availability, blocks: [], appointments: [], notifications: [], settings };
+// Estado inicial vazio. Cada barbearia é provisionada sob demanda (ver ensureShop).
+function emptyState() {
+  const out = {};
+  for (const k of ARRAY_KEYS) out[k] = [];
+  out.settings = {}; // marcador global de inicialização — não usado pelo app
+  return out;
 }
 
-const ARRAY_KEYS = ['clients', 'services', 'barbers', 'availability', 'blocks', 'appointments', 'notifications'];
+// Configurações padrão de uma barbearia nova.
+function defaultShop(shopId) {
+  return {
+    id: shopId,
+    shopName: 'Minha Barbearia',
+    slogan: 'Estilo, precisão e atitude.',
+    phone: '',
+    address: '',
+    slotStep: 15,         // granularidade dos horários (min)
+    bufferMin: 0,         // intervalo entre atendimentos (min)
+    openTime: '09:00',
+    closeTime: '19:00',
+    cancelPolicyHours: 2, // cancelar/remarcar com X horas de antecedência
+    policies: 'Tolerância de 10 minutos de atraso. Cancelamentos com no mínimo 2h de antecedência.',
+  };
+}
+
+// Catálogo de serviços de exemplo (editável) para começar rápido.
+function seedServices(shopId) {
+  const base = [
+    { name: 'Corte Masculino', category: 'Cabelo', durationMin: 40, price: 50, description: 'Corte na tesoura ou máquina com acabamento na navalha.' },
+    { name: 'Barba Completa', category: 'Barba', durationMin: 30, price: 40, description: 'Toalha quente, modelagem e finalização com produtos premium.' },
+    { name: 'Combo Corte + Barba', category: 'Combos', durationMin: 60, price: 80, description: 'O pacote completo do cavalheiro: corte e barba alinhados.' },
+    { name: 'Sobrancelha', category: 'Estética', durationMin: 15, price: 20, description: 'Design e limpeza de sobrancelha na navalha.' },
+    { name: 'Corte Infantil', category: 'Cabelo', durationMin: 30, price: 40, description: 'Atendimento paciente e divertido para os pequenos.' },
+  ];
+  return base.map((s) => ({ id: 'svc-' + uid(), shopId, ...s }));
+}
 
 let cache = null;
 let lastSnapshot = null;   // último estado já refletido no Firestore
@@ -94,18 +61,16 @@ const clone = (x) => JSON.parse(JSON.stringify(x));
 
 // Garante que todas as coleções/objetos esperados existam.
 function normalize(c) {
-  const out = { ...seedData(), ...(c || {}) };
+  const out = { ...emptyState(), ...(c || {}) };
   for (const k of ARRAY_KEYS) if (!Array.isArray(out[k])) out[k] = [];
-  if (!out.settings || typeof out.settings !== 'object') out.settings = seedData().settings;
+  if (!out.settings || typeof out.settings !== 'object') out.settings = {};
   return out;
 }
 
 function loadJSON() {
   if (!fs.existsSync(DB_FILE)) return null;
   try {
-    const c = JSON.parse(fs.readFileSync(DB_FILE, 'utf-8'));
-    if (!Array.isArray(c.blocks)) c.blocks = [];
-    return c;
+    return JSON.parse(fs.readFileSync(DB_FILE, 'utf-8'));
   } catch {
     return null;
   }
@@ -117,18 +82,38 @@ function persistJSON() {
   fs.writeFileSync(DB_FILE, JSON.stringify(cache, null, 2), 'utf-8');
 }
 
-// Carrega o cache de forma síncrona (JSON local ou seed) caso ainda não tenha sido
-// carregado. Mantém a API db.get() síncrona mesmo antes do init() assíncrono.
+// Carrega o cache de forma síncrona (JSON local ou vazio) caso ainda não tenha
+// sido carregado. Mantém db.get() síncrono mesmo antes do init() assíncrono.
 function ensureLoaded() {
   if (cache) return cache;
-  cache = normalize(loadJSON() || seedData());
-  persistJSON();
+  cache = normalize(loadJSON() || emptyState());
   return cache;
 }
 
 /**
+ * Provisiona uma barbearia: na primeira vez que ela acessa, cria o registro em
+ * `shops` (configurações padrão) e um catálogo de serviços de exemplo.
+ * Idempotente: não faz nada se a barbearia já existe.
+ */
+function ensureShop(shopId) {
+  if (!shopId) return;
+  ensureLoaded();
+  if (cache.shops.some((s) => s.id === shopId)) return;
+  cache.shops.push(defaultShop(shopId));
+  cache.services.push(...seedServices(shopId));
+  persistJSON();
+  scheduleSync();
+}
+
+/** Configurações (doc) de uma barbearia. */
+function getShop(shopId) {
+  ensureLoaded();
+  return cache.shops.find((s) => s.id === shopId) || null;
+}
+
+/**
  * Inicialização assíncrona: Firestore como fonte primária.
- * Na 1ª vez popula o Firestore a partir do JSON/seed; depois carrega de lá.
+ * Na 1ª vez, grava o estado vazio no Firestore; depois carrega de lá.
  */
 async function init() {
   if (initFirestore()) {
@@ -137,9 +122,9 @@ async function init() {
         cache = normalize(await loadAll());
         console.log('  🔥 Dados carregados do Firestore.');
       } else {
-        cache = normalize(loadJSON() || seedData());
+        cache = normalize(loadJSON() || emptyState());
         await writeAll(cache);
-        console.log('  🔥 Firestore inicializado com os dados atuais.');
+        console.log('  🔥 Firestore inicializado.');
       }
       lastSnapshot = clone(cache);
       persistJSON();
@@ -148,8 +133,7 @@ async function init() {
       console.error('  ⚠️  Erro ao acessar o Firestore, usando JSON local:', e.message);
     }
   }
-  // Fallback: somente JSON local.
-  cache = normalize(loadJSON() || seedData());
+  cache = normalize(loadJSON() || emptyState());
   persistJSON();
 }
 
@@ -178,6 +162,8 @@ async function runSync() {
 
 export const db = {
   init,
+  ensureShop,
+  getShop,
   get() {
     return ensureLoaded();
   },
@@ -186,11 +172,17 @@ export const db = {
     persistJSON();     // backup local imediato
     scheduleSync();    // sincroniza com o Firestore (debounce)
   },
-  reset() {
-    cache = normalize(seedData());
+  // Restaura uma barbearia ao estado inicial (remove seus dados e re-popula o seed).
+  resetShop(shopId) {
+    ensureLoaded();
+    for (const k of ['clients', 'services', 'barbers', 'availability', 'blocks', 'appointments', 'notifications']) {
+      cache[k] = cache[k].filter((x) => x.shopId !== shopId);
+    }
+    cache.shops = cache.shops.filter((s) => s.id !== shopId);
+    ensureShop(shopId);
     persistJSON();
-    scheduleSync();    // o diff remove no Firestore o que saiu do seed
-    return cache;
+    scheduleSync();
+    return getShop(shopId);
   },
   // Força a sincronização pendente (ex.: testes / shutdown).
   async flush() { if (syncTimer) clearTimeout(syncTimer); await runSync(); },

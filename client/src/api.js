@@ -1,10 +1,34 @@
 // Cliente HTTP fino para a API do BarberMan.
+import { auth } from './firebase.js';
+
 const BASE = '/api';
 
+// Identifica a barbearia no site público pelo ?shop=<id> da URL (lembrado no
+// dispositivo). No painel admin isso é ignorado — usamos o token de login.
+function currentShop() {
+  const fromUrl = new URLSearchParams(location.search).get('shop');
+  if (fromUrl) { try { localStorage.setItem('bm_shop', fromUrl); } catch { /* noop */ } return fromUrl; }
+  try { return localStorage.getItem('bm_shop'); } catch { return null; }
+}
+
 async function req(path, options = {}) {
+  const headers = { 'Content-Type': 'application/json' };
+
+  const user = auth.currentUser;
+  if (user) {
+    // Painel logado: envia o ID token (o servidor resolve a barbearia pelo login).
+    try { headers.Authorization = `Bearer ${await user.getIdToken()}`; } catch { /* segue sem token */ }
+  } else {
+    // Site público: anexa a barbearia como ?shop=<id>.
+    const shop = currentShop();
+    if (shop && !/[?&]shop=/.test(path)) {
+      path += (path.includes('?') ? '&' : '?') + 'shop=' + encodeURIComponent(shop);
+    }
+  }
+
   const res = await fetch(BASE + path, {
-    headers: { 'Content-Type': 'application/json' },
     ...options,
+    headers,
     body: options.body ? JSON.stringify(options.body) : undefined,
   });
   let data = null;
@@ -57,9 +81,11 @@ export const api = {
   // Notificações
   notifications: () => req('/notifications'),
 
+  // Conta logada
+  me: () => req('/me'),
+
   // Configurações / admin
   settings: () => req('/settings'),
   updateSettings: (b) => req('/settings', { method: 'PUT', body: b }),
-  adminLogin: (pin) => req('/admin/login', { method: 'POST', body: { pin } }),
   reset: () => req('/admin/reset', { method: 'POST' }),
 };

@@ -68,6 +68,7 @@ export function pushNotification(appointment, kind = 'novo') {
 
   const record = {
     id: uid(),
+    shopId: appointment.shopId,
     appointmentId: appointment.id,
     channel: 'manual',
     kind,

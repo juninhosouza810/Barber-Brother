@@ -6,17 +6,20 @@ import {
   CheckCircle2, CalendarOff, Ban, Sun,
 } from 'lucide-react';
 import { api } from '../api.js';
+import { auth } from '../firebase.js';
+import { signInWithEmailAndPassword, signOut, onAuthStateChanged } from 'firebase/auth';
 import { BRL, fmtDuration, fmtDateShort, fmtDateLong, WEEKDAYS, nextDays, toISODate, parseISO, buildTimes } from '../lib.js';
 import { Avatar, StatusBadge, Loading, Empty, Modal, useToast } from '../ui.jsx';
 
-const PIN_KEY = 'barberman_admin';
-
 export default function Admin() {
   const toast = useToast();
-  const [authed, setAuthed] = useState(sessionStorage.getItem(PIN_KEY) === '1');
+  const [user, setUser] = useState(undefined); // undefined = carregando; null = deslogado
   const [tab, setTab] = useState('agenda');
 
-  if (!authed) return <PinGate onOk={() => { sessionStorage.setItem(PIN_KEY, '1'); setAuthed(true); }} />;
+  useEffect(() => onAuthStateChanged(auth, setUser), []);
+
+  if (user === undefined) return <div className="container block center" style={{ paddingTop: 80 }}><Loading /></div>;
+  if (!user) return <LoginGate />;
 
   const tabs = [
     { id: 'agenda', label: 'Agenda', icon: CalendarRange },
@@ -39,7 +42,7 @@ export default function Admin() {
         </div>
         <div className="row" style={{ gap: 8 }}>
           <Link to="/" className="btn btn-ghost btn-sm"><ArrowLeft size={15} /> Site</Link>
-          <button className="btn btn-ghost btn-sm" onClick={() => { sessionStorage.removeItem(PIN_KEY); setAuthed(false); }}><LogOut size={15} /> Sair</button>
+          <button className="btn btn-ghost btn-sm" onClick={() => signOut(auth)}><LogOut size={15} /> Sair</button>
         </div>
       </div>
 
@@ -61,30 +64,39 @@ export default function Admin() {
   );
 }
 
-// ---------------- PIN gate ----------------
-function PinGate({ onOk }) {
+// ---------------- Login (Firebase Auth) ----------------
+function LoginGate() {
   const toast = useToast();
-  const [pin, setPin] = useState('');
+  const [email, setEmail] = useState('');
+  const [pass, setPass] = useState('');
   const [loading, setLoading] = useState(false);
   async function submit(e) {
     e.preventDefault();
     setLoading(true);
-    try { await api.adminLogin(pin); onOk(); }
-    catch { toast('PIN incorreto.', 'err'); }
-    finally { setLoading(false); }
+    try {
+      await signInWithEmailAndPassword(auth, email.trim(), pass);
+      // onAuthStateChanged no componente Admin assume daqui.
+    } catch {
+      toast('E-mail ou senha incorretos.', 'err');
+    } finally {
+      setLoading(false);
+    }
   }
   return (
     <div className="container block center" style={{ maxWidth: 380, paddingTop: 70 }}>
       <div className="confirm-check"><Shield size={40} /></div>
       <h2 className="display" style={{ fontSize: '2rem' }}>PAINEL ADMIN</h2>
-      <p className="muted mb">Acesso restrito da BarberMan.</p>
+      <p className="muted mb">Acesse com a conta da sua barbearia.</p>
       <form onSubmit={submit} className="card">
         <div className="field">
-          <label>PIN de acesso</label>
-          <input type="password" value={pin} onChange={(e) => setPin(e.target.value)} placeholder="••••" inputMode="numeric" autoFocus />
+          <label>E-mail</label>
+          <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="voce@suabarbearia.com" autoFocus />
         </div>
-        <button className="btn btn-gold btn-block" disabled={loading}>{loading ? 'Verificando...' : 'Entrar'}</button>
-        <p className="muted center" style={{ fontSize: '0.78rem', marginTop: 12 }}>PIN padrão da demo: <b className="gold">1234</b></p>
+        <div className="field">
+          <label>Senha</label>
+          <input type="password" value={pass} onChange={(e) => setPass(e.target.value)} placeholder="••••••••" />
+        </div>
+        <button className="btn btn-gold btn-block" disabled={loading}>{loading ? 'Entrando...' : 'Entrar'}</button>
       </form>
       <Link to="/" className="btn btn-ghost btn-sm mt"><ArrowLeft size={15} /> Voltar ao site</Link>
     </div>
@@ -661,7 +673,18 @@ function NotificationsTab() {
 function ConfigTab({ toast }) {
   const [f, setF] = useState(null);
   const [saving, setSaving] = useState(false);
-  useEffect(() => { api.settings().then(setF); }, []);
+  const [shopId, setShopId] = useState('');
+  useEffect(() => {
+    api.settings().then(setF);
+    api.me().then((m) => setShopId(m.shopId)).catch(() => {});
+  }, []);
+  const publicLink = shopId ? `${location.origin}/?shop=${shopId}` : '';
+  function copyLink() {
+    if (!publicLink) return;
+    navigator.clipboard?.writeText(publicLink)
+      .then(() => toast('Link copiado!'))
+      .catch(() => toast('Copie manualmente o link.', 'err'));
+  }
   async function save() {
     setSaving(true);
     try { await api.updateSettings(f); toast('Configurações salvas.'); }
@@ -674,6 +697,18 @@ function ConfigTab({ toast }) {
   if (!f) return <Loading />;
   return (
     <div className="grid grid-2">
+      <div className="card" style={{ gridColumn: '1 / -1' }}>
+        <h3 className="display mb" style={{ fontSize: '1.4rem' }}>Link público de agendamento</h3>
+        <p className="muted mb" style={{ fontSize: '0.85rem' }}>
+          Compartilhe este link com seus clientes (Instagram, status, cartão de visita).
+          É por ele que eles agendam na <b>sua</b> barbearia.
+        </p>
+        <div className="row wrap" style={{ gap: 8 }}>
+          <input readOnly value={publicLink} onClick={(e) => e.target.select()} style={{ flex: 1, minWidth: 220 }} />
+          <button className="btn btn-gold btn-sm" onClick={copyLink}>Copiar link</button>
+          {publicLink && <a className="btn btn-ghost btn-sm" href={publicLink} target="_blank" rel="noreferrer">Abrir</a>}
+        </div>
+      </div>
       <div className="card">
         <h3 className="display mb" style={{ fontSize: '1.4rem' }}>Barbearia</h3>
         <Field label="Nome" value={f.shopName} onChange={(v) => setF({ ...f, shopName: v })} />

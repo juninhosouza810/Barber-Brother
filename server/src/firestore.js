@@ -10,7 +10,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const KEY_FILE = path.join(__dirname, '..', 'serviceAccountKey.json');
 
 // Coleções cujos itens são objetos com campo `id`.
-export const COLLECTIONS = ['clients', 'services', 'barbers', 'availability', 'blocks', 'appointments', 'notifications'];
+export const COLLECTIONS = ['clients', 'services', 'barbers', 'availability', 'blocks', 'appointments', 'notifications', 'shops'];
 const META_COL = 'meta';
 const SETTINGS_DOC = 'settings';
 const BATCH_LIMIT = 450; // limite seguro abaixo dos 500 do Firestore
