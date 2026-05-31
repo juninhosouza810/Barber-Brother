@@ -53,7 +53,20 @@ export function initWhatsApp() {
       // Em produção (Docker/Render) usamos o Chromium do sistema via
       // PUPPETEER_EXECUTABLE_PATH; em dev, fica undefined e usa o do Puppeteer.
       executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
-      args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
+      // Flags de baixo consumo de memória — essenciais para rodar o Chromium
+      // em hosts com pouca RAM (ex.: plano grátis do Render, 512 MB).
+      args: [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
+        '--disable-gpu',
+        '--disable-software-rasterizer',
+        '--disable-extensions',
+        '--disable-accelerated-2d-canvas',
+        '--no-first-run',
+        '--no-zygote',
+        '--single-process',
+      ],
     },
   });
 
