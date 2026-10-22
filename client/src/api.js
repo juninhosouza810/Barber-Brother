@@ -5,7 +5,15 @@ const BASE = '/api';
 
 // Identifica a barbearia no site público pelo ?shop=<id> da URL (lembrado no
 // dispositivo). No painel admin isso é ignorado — usamos o token de login.
+// Link exclusivo de agenda do salão: /agenda/<shopId>.
+export function agendaShopId() {
+  const m = location.pathname.match(/^\/agenda\/([^/?#]+)/);
+  return m ? decodeURIComponent(m[1]) : null;
+}
+
 function currentShop() {
+  const fromAgenda = agendaShopId();
+  if (fromAgenda) return fromAgenda;
   const fromUrl = new URLSearchParams(location.search).get('shop');
   if (fromUrl) { try { localStorage.setItem('bm_shop', fromUrl); } catch { /* noop */ } return fromUrl; }
   try { return localStorage.getItem('bm_shop'); } catch { return null; }
@@ -14,7 +22,9 @@ function currentShop() {
 async function req(path, options = {}) {
   const headers = { 'Content-Type': 'application/json' };
 
-  const user = auth.currentUser;
+  // Na agenda pública o salão vem sempre do link, mesmo que o dono esteja logado
+  // neste navegador — assim ele vê exatamente o que o cliente verá.
+  const user = agendaShopId() ? null : auth.currentUser;
   if (user) {
     // Painel logado: envia o ID token (o servidor resolve a barbearia pelo login).
     try { headers.Authorization = `Bearer ${await user.getIdToken()}`; } catch { /* segue sem token */ }
@@ -77,6 +87,37 @@ export const api = {
 
   // Clientes
   clients: () => req('/clients'),
+  createClient: (b) => req('/clients', { method: 'POST', body: b }),
+  updateClient: (id, b) => req(`/clients/${id}`, { method: 'PUT', body: b }),
+  deleteClient: (id) => req(`/clients/${id}`, { method: 'DELETE' }),
+  clientHistory: (id) => req(`/clients/${id}/historico`),
+
+  // Produtos / PDV
+  produtos: () => req('/produtos'),
+  createProduto: (b) => req('/produtos', { method: 'POST', body: b }),
+  updateProduto: (id, b) => req(`/produtos/${id}`, { method: 'PUT', body: b }),
+  deleteProduto: (id) => req(`/produtos/${id}`, { method: 'DELETE' }),
+  vendas: (de, ate) => {
+    const q = new URLSearchParams({ ...(de ? { de } : {}), ...(ate ? { ate } : {}) }).toString();
+    return req(`/vendas${q ? `?${q}` : ''}`);
+  },
+  createVenda: (b) => req('/vendas', { method: 'POST', body: b }),
+  estornarVenda: (id) => req(`/vendas/${id}`, { method: 'DELETE' }),
+
+  // Contas a pagar / receber
+  contas: (params = {}) => {
+    const q = new URLSearchParams(params).toString();
+    return req(`/contas${q ? `?${q}` : ''}`);
+  },
+  createConta: (b) => req('/contas', { method: 'POST', body: b }),
+  updateConta: (id, b) => req(`/contas/${id}`, { method: 'PUT', body: b }),
+  deleteConta: (id) => req(`/contas/${id}`, { method: 'DELETE' }),
+  baixarConta: (id, metodo) => req(`/contas/${id}/baixar`, { method: 'POST', body: { metodo } }),
+  estornarConta: (id) => req(`/contas/${id}/estornar`, { method: 'POST' }),
+  fluxo: (de, ate) => {
+    const q = new URLSearchParams({ ...(de ? { de } : {}), ...(ate ? { ate } : {}) }).toString();
+    return req(`/financeiro/fluxo${q ? `?${q}` : ''}`);
+  },
 
   // Notificações
   notifications: () => req('/notifications'),
@@ -89,7 +130,7 @@ export const api = {
   updateSettings: (b) => req('/settings', { method: 'PUT', body: b }),
   reset: () => req('/admin/reset', { method: 'POST' }),
 
-  // Caixa / Financeiro (plano completo)
+  // Caixa / Financeiro
   caixaAtual: () => req('/caixa/atual'),
   abrirCaixa: (saldoInicial) => req('/caixa/abrir', { method: 'POST', body: { saldoInicial } }),
   fecharCaixa: (saldoFinal) => req('/caixa/fechar', { method: 'POST', body: { saldoFinal } }),
@@ -103,4 +144,5 @@ export const api = {
   // Super-admin (dono do sistema)
   adminShops: () => req('/admin/shops'),
   adminUpdateShop: (id, b) => req(`/admin/shops/${id}`, { method: 'PUT', body: b }),
+  adminPagamento: (id, meses = 1) => req(`/admin/shops/${id}/pagamento`, { method: 'POST', body: { meses } }),
 };

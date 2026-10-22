@@ -11,6 +11,30 @@ export const toHHMM = (min) => {
   return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
 };
 
+// Fuso padrão dos salões. O servidor (ex.: Render) roda em UTC, então "agora"
+// precisa ser calculado no fuso do salão, não no do servidor.
+export const DEFAULT_TZ = 'America/Sao_Paulo';
+
+/** Data (YYYY-MM-DD), minutos do dia e carimbo "relógio de parede" no fuso informado. */
+export function nowInTz(tz = DEFAULT_TZ) {
+  let parts;
+  try {
+    parts = new Intl.DateTimeFormat('en-CA', {
+      timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+    }).formatToParts(new Date());
+  } catch {
+    return nowInTz(DEFAULT_TZ); // fuso inválido nas configurações
+  }
+  const get = (t) => parts.find((p) => p.type === t).value;
+  const date = `${get('year')}-${get('month')}-${get('day')}`;
+  const hhmm = `${get('hour')}:${get('minute')}`;
+  return { date, min: toMin(hhmm), stamp: Date.parse(`${date}T${hhmm}:00Z`) };
+}
+
+/** Carimbo "relógio de parede" de uma data/hora de agendamento (comparável a nowInTz().stamp). */
+export const wallStamp = (date, time) => Date.parse(`${date}T${time}:00Z`);
+
 export const weekdayOf = (dateStr) => new Date(`${dateStr}T00:00:00`).getDay();
 
 // Dois intervalos [aStart,aEnd) e [bStart,bEnd) se sobrepõem?
@@ -42,9 +66,9 @@ export function generateSlots({ barberId, date, durationMin, availability, appoi
       ? { start: 0, end: 24 * 60 }
       : { start: toMin(b.startTime), end: toMin(b.endTime) }));
 
-  const now = new Date();
-  const isToday = date === now.toISOString().slice(0, 10);
-  const nowMin = now.getHours() * 60 + now.getMinutes();
+  const now = nowInTz(settings.timezone);
+  const isPast = date < now.date;
+  const isToday = date === now.date;
 
   const slots = [];
   for (const w of windows) {
@@ -56,7 +80,7 @@ export function generateSlots({ barberId, date, durationMin, availability, appoi
       let reason = null;
 
       // Não permitir horários no passado.
-      if (isToday && t <= nowMin) {
+      if (isPast || (isToday && t <= now.min)) {
         available = false;
         reason = 'passado';
       }

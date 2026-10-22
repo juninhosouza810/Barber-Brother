@@ -3,10 +3,10 @@
 import admin from 'firebase-admin';
 import { db } from './db.js';
 
-const SUPER_ADMIN_EMAIL = (process.env.SUPER_ADMIN_EMAIL || '').toLowerCase();
-
+// Lido na hora (não no import), pois o .env local é carregado pelo index.js.
 export function isSuperAdmin(email) {
-  return !!SUPER_ADMIN_EMAIL && String(email || '').toLowerCase() === SUPER_ADMIN_EMAIL;
+  const superAdmin = (process.env.SUPER_ADMIN_EMAIL || '').toLowerCase();
+  return !!superAdmin && String(email || '').toLowerCase() === superAdmin;
 }
 
 function bearer(req) {
@@ -46,20 +46,6 @@ export async function requireSuperAdmin(req, res, next) {
   }
 }
 
-// Gating por plano: exige que a barbearia esteja no plano informado.
-// O super-admin tem acesso liberado. Use depois de requireAuth.
-export function requirePlan(plan) {
-  return (req, res, next) => {
-    if (isSuperAdmin(req.shopEmail)) return next();
-    const shop = db.getShop(req.shopId);
-    if (!shop) return res.status(404).json({ error: 'Barbearia não encontrada.' });
-    if (shop.plan !== plan) {
-      return res.status(403).json({ error: 'Recurso disponível apenas no plano Completo.' });
-    }
-    next();
-  };
-}
-
 // Rotas acessíveis pelo painel (login) E pelo site público (cliente final).
 // Resolve o shopId pelo token, se houver; senão, pelo ?shop=<id> da URL.
 export async function resolveShop(req, res, next) {
@@ -69,6 +55,7 @@ export async function resolveShop(req, res, next) {
       const decoded = await admin.auth().verifyIdToken(token);
       req.shopId = decoded.uid;
       req.shopEmail = decoded.email || null;
+      req.authed = true; // requisição do painel (dono logado)
       db.ensureShop(req.shopId, req.shopEmail);
       return next();
     } catch { /* token inválido: tenta o parâmetro público abaixo */ }

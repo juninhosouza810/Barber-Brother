@@ -12,7 +12,7 @@ export const uid = () => randomUUID().slice(0, 8);
 
 // Coleções de dados (cada documento carrega um campo shopId).
 // `shops` guarda as configurações de cada barbearia (doc id = shopId).
-const ARRAY_KEYS = ['clients', 'services', 'barbers', 'availability', 'blocks', 'appointments', 'notifications', 'shops', 'caixas', 'movimentos'];
+const ARRAY_KEYS = ['clients', 'services', 'barbers', 'availability', 'blocks', 'appointments', 'notifications', 'shops', 'caixas', 'movimentos', 'produtos', 'vendas', 'contas'];
 
 // Estado inicial vazio. Cada barbearia é provisionada sob demanda (ver ensureShop).
 function emptyState() {
@@ -27,7 +27,9 @@ function defaultShop(shopId) {
   return {
     id: shopId,
     email: '',
-    shopName: 'Minha Barbearia',
+    shopName: 'Meu Salão',
+    logo: '',             // data URL da logo personalizada (vazio = marca padrão)
+    themeColor: '',       // cor de destaque do layout (#rrggbb; vazio = padrão rosé)
     slogan: 'Estilo, precisão e atitude.',
     phone: '',
     address: '',
@@ -37,8 +39,7 @@ function defaultShop(shopId) {
     closeTime: '19:00',
     cancelPolicyHours: 2, // cancelar/remarcar com X horas de antecedência
     policies: 'Tolerância de 10 minutos de atraso. Cancelamentos com no mínimo 2h de antecedência.',
-    // Assinatura: "agendamento" (R$ 29,90) ou "completo" (R$ 54,90, com PDV/Caixa).
-    plan: 'agendamento',
+    // Assinatura: plano único (todas as funções) — preço em PLANO_PRECO (index.js).
     assinaturaAtiva: true,
     vencimento: null,
     criadoEm: new Date().toISOString(),
@@ -192,7 +193,7 @@ export const db = {
   // Restaura uma barbearia ao estado inicial (remove seus dados e re-popula o seed).
   resetShop(shopId) {
     ensureLoaded();
-    for (const k of ['clients', 'services', 'barbers', 'availability', 'blocks', 'appointments', 'notifications', 'caixas', 'movimentos']) {
+    for (const k of ['clients', 'services', 'barbers', 'availability', 'blocks', 'appointments', 'notifications', 'caixas', 'movimentos', 'produtos', 'vendas', 'contas']) {
       cache[k] = cache[k].filter((x) => x.shopId !== shopId);
     }
     cache.shops = cache.shops.filter((s) => s.id !== shopId);

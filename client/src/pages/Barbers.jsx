@@ -26,7 +26,7 @@ export default function Barbers() {
       <div className="section-head">
         <p className="eyebrow">Nossa equipe</p>
         <h2>Profissionais</h2>
-        <p className="muted">Conheça os barbeiros e seus dias de atendimento.</p>
+        <p className="muted">Conheça os profissionais e seus dias de atendimento.</p>
       </div>
 
       <div className="grid grid-2">

@@ -4,8 +4,8 @@ import {
   Search, CalendarClock, Clock, Scissors, UserRound, XCircle, RefreshCw, CalendarPlus, Phone,
 } from 'lucide-react';
 import { api } from '../api.js';
-import { BRL, fmtDateLong, fmtDuration, nextDays, toISODate, WEEKDAYS, phoneMask } from '../lib.js';
-import { Avatar, StatusBadge, Loading, Empty, Modal, useToast } from '../ui.jsx';
+import { BRL, fmtDateLong, fmtDuration, phoneMask } from '../lib.js';
+import { Avatar, StatusBadge, Loading, Empty, Modal, useToast, MonthCalendar } from '../ui.jsx';
 
 export default function MyBookings() {
   const toast = useToast();
@@ -169,16 +169,8 @@ function RescheduleModal({ appt, onClose, onDone }) {
   return (
     <Modal title="Remarcar horário" onClose={onClose}>
       <p className="muted mb">{appt.serviceName} com {appt.barberName}</p>
-      <div className="cal-days mb">
-        {nextDays(14).map((d) => {
-          const iso = toISODate(d);
-          const works = workdays.has(d.getDay());
-          return (
-            <button key={iso} className={`cal-day ${date === iso ? 'sel' : ''} ${!works ? 'disabled' : ''}`} disabled={!works} onClick={() => setDate(iso)}>
-              <small>{WEEKDAYS[d.getDay()]}</small><b>{d.getDate()}</b>
-            </button>
-          );
-        })}
+      <div className="mb">
+        <MonthCalendar value={date} onChange={setDate} isDisabled={(d) => (!workdays.has(d.getDay()) ? 'Sem atendimento' : false)} />
       </div>
       {!slots ? <Loading /> : slots.length === 0 ? (
         <p className="muted center">Sem atendimento neste dia.</p>

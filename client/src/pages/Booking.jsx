@@ -5,13 +5,14 @@ import {
   PartyPopper, MessageCircle, CalendarPlus,
 } from 'lucide-react';
 import { api } from '../api.js';
-import { BRL, fmtDuration, nextDays, toISODate, WEEKDAYS, fmtDateLong, phoneMask } from '../lib.js';
-import { Avatar, Loading, useToast } from '../ui.jsx';
+import { BRL, fmtDuration, fmtDateLong, phoneMask } from '../lib.js';
+import { Avatar, Loading, useToast, MonthCalendar } from '../ui.jsx';
 
 // Títulos por índice lógico de etapa (0=Serviço, 1=Barbeiro, 2=Data, 3=Dados).
-const STEP_TITLES = ['Serviço', 'Barbeiro', 'Data & Hora', 'Seus dados'];
+const STEP_TITLES = ['Serviço', 'Profissional', 'Data & Hora', 'Seus dados'];
 
-export default function Booking() {
+// `embedded`: usado na agenda pública (/agenda/:shopId), sem links para o resto do site.
+export default function Booking({ embedded = false }) {
   const [params] = useSearchParams();
   const navigate = useNavigate();
   const toast = useToast();
@@ -102,7 +103,15 @@ export default function Booking() {
 
   if (loading) return <div className="container"><Loading /></div>;
 
-  if (confirmed) return <Confirmation data={confirmed} service={service} barber={barber} date={date} time={time} navigate={navigate} />;
+  if (confirmed) {
+    return (
+      <Confirmation
+        data={confirmed} service={service} barber={barber} date={date} time={time} navigate={navigate}
+        embedded={embedded}
+        onRestart={() => { setConfirmed(null); setDate(''); setTime(''); setStep(flow[0]); }}
+      />
+    );
+  }
 
   return (
     <div className="container block" style={{ paddingBottom: 120 }}>
@@ -248,27 +257,13 @@ function DatePicker({ barberId, value, onChange }) {
   const workdays = new Set(avail.map((a) => a.weekday));
   // Dias com folga de dia inteiro ficam indisponíveis no calendário.
   const offDays = new Set(blocks.filter((b) => b.allDay).map((b) => b.date));
-  const days = nextDays(14);
 
   return (
-    <div className="cal-days">
-      {days.map((d) => {
-        const iso = toISODate(d);
-        const off = !workdays.has(d.getDay()) || offDays.has(iso);
-        return (
-          <button
-            key={iso}
-            className={`cal-day ${value === iso ? 'sel' : ''} ${off ? 'disabled' : ''}`}
-            disabled={off}
-            title={offDays.has(iso) ? 'Folga do profissional' : ''}
-            onClick={() => onChange(iso)}
-          >
-            <small>{WEEKDAYS[d.getDay()]}</small>
-            <b>{d.getDate()}</b>
-          </button>
-        );
-      })}
-    </div>
+    <MonthCalendar
+      value={value}
+      onChange={onChange}
+      isDisabled={(d, iso) => (offDays.has(iso) ? 'Folga do profissional' : !workdays.has(d.getDay()) ? 'Sem atendimento' : false)}
+    />
   );
 }
 
@@ -293,13 +288,13 @@ const Row = ({ label, value }) => (
   </div>
 );
 
-function Confirmation({ data, service, barber, date, time, navigate }) {
+function Confirmation({ data, service, barber, date, time, navigate, embedded, onRestart }) {
   const { appointment, notification } = data;
   return (
     <div className="container block center" style={{ maxWidth: 520, paddingBottom: 120 }}>
       <div className="confirm-check"><PartyPopper size={44} /></div>
       <h2 className="display" style={{ fontSize: '2.2rem' }}>AGENDAMENTO ENVIADO!</h2>
-      <p className="muted mb">Recebemos seu pedido. O status inicial é <b className="gold">pendente</b> e será confirmado pela barbearia.</p>
+      <p className="muted mb">Recebemos seu pedido. O status inicial é <b className="gold">pendente</b> e será confirmado pelo salão.</p>
       <p className="muted mb" style={{ fontSize: '0.88rem', display: 'flex', gap: 6, alignItems: 'center', justifyContent: 'center' }}>
         <MessageCircle size={15} className="gold" /> Enviamos os detalhes para o seu WhatsApp. Você receberá um lembrete 4h antes.
       </p>
@@ -319,10 +314,14 @@ function Confirmation({ data, service, barber, date, time, navigate }) {
           <MessageCircle size={18} /> Enviar confirmação no WhatsApp
         </a>
       )}
-      <div className="row mt" style={{ gap: 10 }}>
-        <button className="btn btn-ghost btn-block" onClick={() => navigate('/meus-agendamentos')}>Meus agendamentos</button>
-        <Link to="/" className="btn btn-ghost btn-block"><CalendarPlus size={16} /> Início</Link>
-      </div>
+      {embedded ? (
+        <button className="btn btn-ghost btn-block mt" onClick={onRestart}><CalendarPlus size={16} /> Fazer outro agendamento</button>
+      ) : (
+        <div className="row mt" style={{ gap: 10 }}>
+          <button className="btn btn-ghost btn-block" onClick={() => navigate('/meus-agendamentos')}>Meus agendamentos</button>
+          <Link to="/" className="btn btn-ghost btn-block"><CalendarPlus size={16} /> Início</Link>
+        </div>
+      )}
     </div>
   );
 }

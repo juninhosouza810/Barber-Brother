@@ -1,18 +1,13 @@
 // Agendador de lembretes: envia um aviso por WhatsApp ~4h antes do atendimento.
 import { db } from './db.js';
 import { pushNotification } from './notify.js';
+import { nowInTz, wallStamp } from './schedule.js';
 
 const HOURS_BEFORE = 4;
 const CHECK_EVERY_MS = 60 * 1000; // verifica a cada minuto
 
-function apptTimestamp(appt) {
-  // Interpreta data/hora no fuso local do servidor.
-  return new Date(`${appt.date}T${appt.time}:00`).getTime();
-}
-
 function checkReminders() {
   const data = db.get();
-  const now = Date.now();
   const remindWindow = HOURS_BEFORE * 60 * 60 * 1000;
   let changed = false;
 
@@ -20,7 +15,9 @@ function checkReminders() {
     if (appt.status === 'cancelado') continue;
     if (appt.reminderSent) continue;
 
-    const start = apptTimestamp(appt);
+    // Compara no fuso do salão (o servidor pode estar em UTC).
+    const now = nowInTz(db.getShop(appt.shopId)?.timezone).stamp;
+    const start = wallStamp(appt.date, appt.time);
     const remindAt = start - remindWindow;
 
     // Janela: já passou da marca de 4h antes e o atendimento ainda não começou.

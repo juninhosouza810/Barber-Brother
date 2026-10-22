@@ -20,16 +20,16 @@ export default function Home() {
     <>
       <section className="hero">
         <div className="container hero-inner">
-          <p className="eyebrow">Barbearia Premium</p>
+          <p className="eyebrow">{settings.shopName || 'Meu Salão'}</p>
           <h1>SEU VISUAL<br /><span>NO PONTO CERTO</span></h1>
-          <p>{settings.slogan || 'Agende seu corte e barba em poucos cliques. Profissionais top, horários no seu tempo.'}</p>
+          <p>{settings.slogan || 'Agende seu horário em poucos cliques. Profissionais especializados, no seu tempo.'}</p>
           <div className="hero-cta">
             <Link to="/agendar" className="btn btn-gold"><CalendarPlus size={18} /> Agendar agora</Link>
             <Link to="/servicos" className="btn btn-ghost"><Scissors size={18} /> Ver serviços</Link>
           </div>
           <div className="hero-stats">
             <div><b>{services.length}+</b><small>Serviços</small></div>
-            <div><b>{barbers.length}</b><small>Barbeiros</small></div>
+            <div><b>{barbers.length}</b><small>Profissionais</small></div>
             <div><b>4.9</b><small>Avaliação</small></div>
           </div>
         </div>
@@ -40,7 +40,7 @@ export default function Home() {
           <div className="grid grid-3">
             <Feature icon={Clock} title="Rápido e fácil" text="Reserve em menos de 1 minuto, sem ligação." />
             <Feature icon={ShieldCheck} title="Sem conflito" text="Horários ocupados são bloqueados em tempo real." />
-            <Feature icon={Star} title="Profissionais top" text="Equipe especializada em corte, barba e mais." />
+            <Feature icon={Star} title="Profissionais top" text="Equipe especializada em cabelo, estética e muito mais." />
           </div>
         </section>
 
@@ -72,7 +72,7 @@ export default function Home() {
         <section className="block">
           <div className="section-head">
             <p className="eyebrow">Equipe</p>
-            <h2>Escolha seu barbeiro</h2>
+            <h2>Escolha seu profissional</h2>
           </div>
           <div className="grid grid-3">
             {barbers.map((b) => (

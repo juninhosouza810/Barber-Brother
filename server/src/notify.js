@@ -16,7 +16,7 @@ export function buildMessage(appointment, kind = 'novo') {
   const data = db.get();
   const service = data.services.find((s) => s.id === appointment.serviceId);
   const barber = data.barbers.find((b) => b.id === appointment.barberId);
-  const shop = data.settings?.shopName || 'BarberMan';
+  const shop = data.settings?.shopName || 'Meu Salão';
   const address = data.settings?.address;
 
   const quando = `${fmtDate(appointment.date)} às ${appointment.time}`;

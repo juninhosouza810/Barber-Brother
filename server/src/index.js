@@ -1,14 +1,19 @@
 import express from 'express';
 import cors from 'cors';
 import { db, uid } from './db.js';
-import { generateSlots, isSlotFree } from './schedule.js';
+import { generateSlots, isSlotFree, nowInTz } from './schedule.js';
 import { pushNotification } from './notify.js';
 import { startReminderLoop } from './reminders.js';
-import { requireAuth, resolveShop, requireSuperAdmin, requirePlan, isSuperAdmin } from './auth.js';
+import { requireAuth, resolveShop, requireSuperAdmin, isSuperAdmin } from './auth.js';
+import { registerGestao } from './gestao.js';
+
+// Variáveis locais opcionais (server/.env). Em produção vêm do ambiente (Render).
+try { process.loadEnvFile(new URL('../.env', import.meta.url)); } catch { /* sem .env */ }
 
 const app = express();
 app.use(cors());
-app.use(express.json());
+// Limite maior para aceitar a logo do salão (data URL já redimensionada no client).
+app.use(express.json({ limit: '1mb' }));
 
 const PORT = process.env.PORT || 4000;
 
@@ -31,7 +36,9 @@ app.get('/api/me', requireAuth, (req, res) => {
     shopId: req.shopId,
     email: req.shopEmail,
     shopName: shop.shopName || '',
-    plan: shop.plan || 'agendamento',
+    logo: shop.logo || '',
+    themeColor: shop.themeColor || '',
+    planPrice: PLANO_PRECO,
     assinaturaAtiva: shop.assinaturaAtiva !== false,
     vencimento: shop.vencimento || null,
     isSuperAdmin: isSuperAdmin(req.shopEmail),
@@ -41,21 +48,53 @@ app.get('/api/me', requireAuth, (req, res) => {
 // ----------------------------------------------------------------------------
 // Super-admin (dono do sistema) — gestão das barbearias / assinaturas
 // ----------------------------------------------------------------------------
-const PLAN_PRICE = { agendamento: 29.9, completo: 54.9 };
+// Plano único com todas as funções (agenda, PDV, caixa, contas, financeiro).
+const PLANO_PRECO = 59.9;
 
-app.get('/api/admin/shops', requireSuperAdmin, (req, res) => {
-  const data = db.get();
-  const list = data.shops.map((s) => ({
+// Situação da assinatura a partir do vencimento (data AAAA-MM-DD no fuso de Brasília).
+const AVISO_DIAS = 5; // "vence em breve" quando faltam até 5 dias
+function diasEntre(de, ate) {
+  return Math.round((Date.parse(ate + 'T00:00:00Z') - Date.parse(de + 'T00:00:00Z')) / 86_400_000);
+}
+function situacaoAssinatura(s, hoje) {
+  if (s.assinaturaAtiva === false) return { situacao: 'bloqueada', diasParaVencer: null };
+  if (!s.vencimento) return { situacao: 'sem_vencimento', diasParaVencer: null };
+  const dias = diasEntre(hoje, s.vencimento);
+  if (dias < 0) return { situacao: 'vencida', diasParaVencer: dias };
+  if (dias <= AVISO_DIAS) return { situacao: 'vence_em_breve', diasParaVencer: dias };
+  return { situacao: 'em_dia', diasParaVencer: dias };
+}
+function somaMeses(iso, meses) {
+  const [y, m, d] = iso.split('-').map(Number);
+  const alvo = new Date(Date.UTC(y, m - 1 + meses, 1));
+  const ultimoDia = new Date(Date.UTC(alvo.getUTCFullYear(), alvo.getUTCMonth() + 1, 0)).getUTCDate();
+  alvo.setUTCDate(Math.min(d, ultimoDia));
+  return alvo.toISOString().slice(0, 10);
+}
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+
+function resumoShop(s, data, hoje) {
+  return {
     id: s.id,
     email: s.email || '',
     shopName: s.shopName || '',
-    plan: s.plan || 'agendamento',
-    planPrice: PLAN_PRICE[s.plan] ?? PLAN_PRICE.agendamento,
+    logo: s.logo || '',
+    phone: s.phone || '',
+    planPrice: PLANO_PRECO,
     assinaturaAtiva: s.assinaturaAtiva !== false,
     vencimento: s.vencimento || null,
+    ultimoPagamento: s.ultimoPagamento || null,
+    pagamentos: (s.pagamentos || []).slice(-12).reverse(),
     criadoEm: s.criadoEm || null,
     agendamentos: data.appointments.filter((a) => a.shopId === s.id).length,
-  }));
+    ...situacaoAssinatura(s, hoje),
+  };
+}
+
+app.get('/api/admin/shops', requireSuperAdmin, (req, res) => {
+  const data = db.get();
+  const hoje = nowInTz().date;
+  const list = data.shops.map((s) => resumoShop(s, data, hoje));
   list.sort((a, b) => (b.criadoEm || '').localeCompare(a.criadoEm || ''));
   ok(res, list);
 });
@@ -63,13 +102,33 @@ app.get('/api/admin/shops', requireSuperAdmin, (req, res) => {
 app.put('/api/admin/shops/:id', requireSuperAdmin, (req, res) => {
   const data = db.get();
   const shop = data.shops.find((s) => s.id === req.params.id);
-  if (!shop) return bad(res, 'Barbearia não encontrada.', 404);
-  const { plan, assinaturaAtiva, vencimento } = req.body;
-  if (plan != null) shop.plan = plan === 'completo' ? 'completo' : 'agendamento';
+  if (!shop) return bad(res, 'Salão não encontrado.', 404);
+  const { assinaturaAtiva, vencimento } = req.body;
+  if (vencimento != null && vencimento !== '' && !ISO_DATE.test(vencimento)) return bad(res, 'Data de vencimento inválida.');
   if (assinaturaAtiva != null) shop.assinaturaAtiva = !!assinaturaAtiva;
   if (vencimento !== undefined) shop.vencimento = vencimento || null;
   db.save();
-  ok(res, shop);
+  ok(res, resumoShop(shop, data, nowInTz().date));
+});
+
+// Registra o pagamento da mensalidade: estende o vencimento em N meses
+// (a partir do vencimento atual, ou de hoje se já venceu) e reativa o salão.
+app.post('/api/admin/shops/:id/pagamento', requireSuperAdmin, (req, res) => {
+  const data = db.get();
+  const shop = data.shops.find((s) => s.id === req.params.id);
+  if (!shop) return bad(res, 'Salão não encontrado.', 404);
+  const meses = Math.trunc(Number(req.body?.meses) || 1);
+  if (meses < 1 || meses > 12) return bad(res, 'Informe de 1 a 12 meses.');
+  const hoje = nowInTz().date;
+  const base = shop.vencimento && shop.vencimento > hoje ? shop.vencimento : hoje;
+  shop.vencimento = somaMeses(base, meses);
+  shop.ultimoPagamento = hoje;
+  shop.assinaturaAtiva = true;
+  shop.pagamentos = [...(shop.pagamentos || []), {
+    data: hoje, meses, valor: Math.round(PLANO_PRECO * meses * 100) / 100, vencimento: shop.vencimento,
+  }].slice(-60);
+  db.save();
+  ok(res, resumoShop(shop, data, hoje));
 });
 
 // ----------------------------------------------------------------------------
@@ -166,7 +225,9 @@ app.delete('/api/barbers/:id', requireAuth, (req, res) => {
 // ----------------------------------------------------------------------------
 // Disponibilidade (agenda semanal do barbeiro)
 // ----------------------------------------------------------------------------
-app.get('/api/availability', requireAuth, (req, res) => {
+// Leitura pública (a agenda do cliente precisa saber os dias de atendimento).
+app.get('/api/availability', resolveShop, (req, res) => {
+  if (!req.shopId) return ok(res, []);
   const data = db.get();
   const { barberId } = req.query;
   let list = data.availability.filter(ofShop(req));
@@ -192,13 +253,19 @@ app.put('/api/availability/:barberId', requireAuth, (req, res) => {
 // ----------------------------------------------------------------------------
 // Folgas / bloqueios (datas e horários em que o barbeiro NÃO atende)
 // ----------------------------------------------------------------------------
-app.get('/api/blocks', requireAuth, (req, res) => {
+// Leitura pública (o calendário do cliente esconde os dias de folga). Sem login,
+// devolve só data/horário — o motivo da folga fica restrito ao painel.
+app.get('/api/blocks', resolveShop, (req, res) => {
+  if (!req.shopId) return ok(res, []);
   const data = db.get();
   const { barberId } = req.query;
   let list = data.blocks.filter(ofShop(req));
   if (barberId) list = list.filter((b) => b.barberId === barberId);
-  const today = new Date().toISOString().slice(0, 10);
+  const today = nowInTz(shopSettings(req).timezone).date;
   list = list.filter((b) => b.date >= today).sort((a, b) => (a.date + (a.startTime || '')).localeCompare(b.date + (b.startTime || '')));
+  if (!req.authed) {
+    list = list.map(({ id, barberId: bId, date, allDay, startTime, endTime }) => ({ id, barberId: bId, date, allDay, startTime, endTime }));
+  }
   ok(res, list);
 });
 
@@ -289,7 +356,10 @@ app.get('/api/appointments', resolveShop, (req, res) => {
 });
 
 app.post('/api/appointments', resolveShop, (req, res) => {
-  if (!req.shopId) return bad(res, 'Barbearia não identificada.');
+  if (!req.shopId) return bad(res, 'Salão não identificado.');
+  const shop = db.getShop(req.shopId);
+  if (!shop) return bad(res, 'Salão não encontrado.', 404);
+  if (shop.assinaturaAtiva === false) return bad(res, 'A agenda deste salão está temporariamente indisponível.', 403);
   const data = db.get();
   const { clientName, clientPhone, clientEmail, serviceId, barberId, date, time, notes } = req.body;
   if (!clientName || !clientPhone || !serviceId || !barberId || !date || !time) {
@@ -379,11 +449,11 @@ app.patch('/api/appointments/:id', resolveShop, (req, res) => {
   if (status != null) { appt.status = status; if (status === 'cancelado') kind = 'cancelado'; }
   if (rescheduled) appt.reminderSent = false;
 
-  // Plano completo: ao CONCLUIR o atendimento, o valor do serviço entra no
-  // caixa automaticamente (uma única vez por agendamento).
+  // Ao CONCLUIR o atendimento, o valor do serviço entra no caixa
+  // automaticamente (uma única vez por agendamento).
   if (appt.status === 'concluido' && !appt.lancadoNoCaixa) {
     const shop = db.getShop(req.shopId);
-    if (shop && shop.plan === 'completo') {
+    if (shop) {
       const svc = data.services.find((s) => s.id === appt.serviceId && s.shopId === req.shopId);
       const valor = svc ? Number(svc.price) || 0 : 0;
       const aberto = data.caixas.find((c) => c.shopId === req.shopId && c.status === 'aberto');
@@ -397,6 +467,7 @@ app.patch('/api/appointments/:id', resolveShop, (req, res) => {
         apptId: appt.id,
         metodo: req.body.metodo || '',
         data: new Date().toISOString(),
+        dia: nowInTz(shop.timezone).date,
       });
       appt.lancadoNoCaixa = true;
     }
@@ -440,16 +511,34 @@ app.post('/api/notifications/:id/read', requireAuth, (req, res) => {
 // ----------------------------------------------------------------------------
 // Configurações da barbearia (públicas para leitura; edição só logado)
 // ----------------------------------------------------------------------------
+// Campos do salão que o site/agenda pública pode ver (sem e-mail, vencimento...).
+const PUBLIC_SHOP_FIELDS = ['id', 'shopName', 'slogan', 'logo', 'themeColor', 'phone', 'address', 'openTime', 'closeTime',
+  'slotStep', 'cancelPolicyHours', 'policies', 'assinaturaAtiva'];
+
 app.get('/api/settings', resolveShop, (req, res) => {
-  ok(res, db.getShop(req.shopId) || {});
+  const shop = db.getShop(req.shopId);
+  if (!shop) return ok(res, {});
+  if (req.authed) return ok(res, shop);
+  const pub = {};
+  for (const k of PUBLIC_SHOP_FIELDS) if (shop[k] !== undefined) pub[k] = shop[k];
+  pub.assinaturaAtiva = shop.assinaturaAtiva !== false;
+  ok(res, pub);
 });
 
 app.put('/api/settings', requireAuth, (req, res) => {
   const data = db.get();
   const shop = data.shops.find((s) => s.id === req.shopId);
-  if (!shop) return bad(res, 'Barbearia não encontrada.', 404);
-  // O id não pode ser sobrescrito pelo corpo.
-  const { id, ...patch } = req.body || {};
+  if (!shop) return bad(res, 'Salão não encontrado.', 404);
+  // id e dados de assinatura não podem ser sobrescritos pelo assinante (só o super-admin).
+  const { id, plan, planPrice, assinaturaAtiva, vencimento, ultimoPagamento, pagamentos, email, criadoEm, ...patch } = req.body || {};
+  if (patch.logo != null) {
+    if (typeof patch.logo !== 'string') return bad(res, 'Logo inválida.');
+    if (patch.logo && !patch.logo.startsWith('data:image/')) return bad(res, 'A logo precisa ser uma imagem.');
+    if (patch.logo.length > 700_000) return bad(res, 'Logo muito grande (máx. ~500 KB).');
+  }
+  if (patch.themeColor != null && patch.themeColor !== '' && !/^#[0-9a-f]{6}$/i.test(patch.themeColor)) {
+    return bad(res, 'Cor do layout inválida.');
+  }
   Object.assign(shop, patch);
   db.save();
   ok(res, shop);
@@ -462,21 +551,23 @@ app.post('/api/admin/reset', requireAuth, (req, res) => {
 });
 
 // ----------------------------------------------------------------------------
-// Caixa / Financeiro (PDV) — exclusivo do plano "completo"
+// Caixa / Financeiro (PDV)
 // ----------------------------------------------------------------------------
-const completo = [requireAuth, requirePlan('completo')];
 
+// Saldo físico esperado na gaveta: só dinheiro (Pix/cartão não passam pelo caixa).
+// Lançamentos antigos sem método são tratados como dinheiro.
 function saldoEsperado(caixa, movimentos) {
   let saldo = Number(caixa.saldoInicial) || 0;
   for (const m of movimentos) {
     if (m.caixaId !== caixa.id) continue;
+    if (m.metodo && m.metodo !== 'Dinheiro') continue;
     if (m.tipo === 'entrada' || m.tipo === 'suprimento') saldo += Number(m.valor) || 0;
     else if (m.tipo === 'saida' || m.tipo === 'sangria') saldo -= Number(m.valor) || 0;
   }
   return saldo;
 }
 
-app.get('/api/caixa/atual', ...completo, (req, res) => {
+app.get('/api/caixa/atual', requireAuth, (req, res) => {
   const data = db.get();
   const caixa = data.caixas.find((c) => c.shopId === req.shopId && c.status === 'aberto') || null;
   const movimentos = caixa
@@ -485,7 +576,7 @@ app.get('/api/caixa/atual', ...completo, (req, res) => {
   ok(res, { caixa, movimentos, saldoEsperado: caixa ? saldoEsperado(caixa, data.movimentos.filter((m) => m.shopId === req.shopId)) : 0 });
 });
 
-app.post('/api/caixa/abrir', ...completo, (req, res) => {
+app.post('/api/caixa/abrir', requireAuth, (req, res) => {
   const data = db.get();
   if (data.caixas.some((c) => c.shopId === req.shopId && c.status === 'aberto')) return bad(res, 'Já existe um caixa aberto.');
   const caixa = {
@@ -498,7 +589,7 @@ app.post('/api/caixa/abrir', ...completo, (req, res) => {
   ok(res, caixa);
 });
 
-app.post('/api/caixa/fechar', ...completo, (req, res) => {
+app.post('/api/caixa/fechar', requireAuth, (req, res) => {
   const data = db.get();
   const caixa = data.caixas.find((c) => c.shopId === req.shopId && c.status === 'aberto');
   if (!caixa) return bad(res, 'Nenhum caixa aberto.');
@@ -509,7 +600,7 @@ app.post('/api/caixa/fechar', ...completo, (req, res) => {
   ok(res, caixa);
 });
 
-app.post('/api/caixa/movimento', ...completo, (req, res) => {
+app.post('/api/caixa/movimento', requireAuth, (req, res) => {
   const data = db.get();
   const { tipo, valor, descricao } = req.body;
   if (!['sangria', 'suprimento'].includes(tipo)) return bad(res, 'Tipo inválido (use sangria ou suprimento).');
@@ -522,13 +613,13 @@ app.post('/api/caixa/movimento', ...completo, (req, res) => {
   ok(res, mov);
 });
 
-app.get('/api/caixa/historico', ...completo, (req, res) => {
+app.get('/api/caixa/historico', requireAuth, (req, res) => {
   const data = db.get();
   const list = data.caixas.filter((c) => c.shopId === req.shopId).sort((a, b) => (b.abertoEm || '').localeCompare(a.abertoEm || '')).slice(0, 20);
   ok(res, list);
 });
 
-app.get('/api/financeiro/resumo', ...completo, (req, res) => {
+app.get('/api/financeiro/resumo', requireAuth, (req, res) => {
   const data = db.get();
   const { de, ate } = req.query;
   let movs = data.movimentos.filter((m) => m.shopId === req.shopId && m.tipo === 'entrada');
@@ -541,10 +632,13 @@ app.get('/api/financeiro/resumo', ...completo, (req, res) => {
   ok(res, { receita, qtd, ticket: qtd ? receita / qtd : 0, porMetodo });
 });
 
+// Clientes, PDV, produtos, contas a pagar/receber e fluxo de caixa.
+registerGestao(app);
+
 // Carrega os dados (Firestore como fonte primária) antes de aceitar requisições.
 await db.init();
 
 app.listen(PORT, () => {
-  console.log(`\n  🪒 BarberMan API rodando em http://localhost:${PORT}\n`);
+  console.log(`\n  ✂️  Meu Salão API rodando em http://localhost:${PORT}\n`);
   startReminderLoop();
 });
